@@ -60,11 +60,11 @@ for (i in 1:nrow(tributary.loc)){
 #' 4. Long point: LONG POINT(AUT) (do not have 04-05 data); 9026; 2004-2009
 #' 5. Port dover: DELHI CS; 27528; 2006-2012 (ect 09,10)
 #' 6. Nipigon: CAMERON FALLS (AUT); 27674; 1998-2010(ect 1999)
-#' 7. Still: MONETVILLE; ?; 2002-2008 (ect 03,06,07)
-#' 8. Mississagi: GORE BAY CLIMATE (only 2010-2014); ?; 2007-2014 (ect 2008,09)
+#' 7. Still: MONETVILLE; 4125; 2002-2008 (ect 03,06,07)
+#' 8. Mississagi: GORE BAY CLIMATE (only 2010-2014); 48788; 2007-2014 (ect 2008,09)
 
 #' Locations that do not have corresponding weather stations:
-#' St.louis; Fox; Vermillion; PB; Saginaw; Genesee
+#' St.louis; Fox; Vermilion; PB; Saginaw; Genesee
 
 
 
@@ -73,6 +73,7 @@ for (i in 1:nrow(tributary.loc)){
 
 
 ## Big creek (2000-2009, 2012-2014)
+#' 1. Big creek: DELHI CS; 27528; 2000-2014 (ect 2010,2011)
 bigcreek <- weather_dl(station_ids = 27528, interval = "day", quiet = T,
                        start = "2000-01-01", end = "2014-12-31") %>% 
   select(station_name, station_id, year, month, day,
@@ -81,22 +82,62 @@ bigcreek <- weather_dl(station_ids = 27528, interval = "day", quiet = T,
 
 
 ## Big otter (2012-2014)
+#' 2. Big otter: TILLSONBURG NORTH; 27488; 2012-2014
 bigotter <- weather_dl(station_ids = 27488, interval = "day", quiet = T,
                         start = "2012-01-01", end = "2014-12-31") %>% 
   select(station_name, station_id, year, month, day,
          max_temp, mean_temp, min_temp)
 
-## Humber
+
+## Humber (1998-2013, ect 2004,2010)
+#' 3. Humber: TORONTO LESTER B. PEARSON INT'L A; 5097; 1998-2013 (ect 2004,2010)
+humber <- weather_dl(station_ids = 5097, interval = "day", quiet = T,
+                     start = "1998-01-01", end = "2013-12-31") %>% 
+  select(station_name, station_id, year, month, day,
+         max_temp, mean_temp, min_temp) %>% 
+  filter(year != 2004 & year != 2010)
+
 
 ## Long point
+#' 4. Long point: LONG POINT(AUT) (do not have 04-05 data); 9026; 2004-2009
+longpoint <- weather_dl(station_ids = 9026, interval = "day", quiet = T,
+                        start = "2006-01-01", end = "2009-12-31") %>% 
+  select(station_name, station_id, year, month, day,
+         max_temp, mean_temp, min_temp)
 
-## Port Dover
 
-## Nipigon
+## Port Dover (2006-2012, ect 09,10)
+portdover <- weather_dl(station_ids = 27674, interval = "day", quiet = T,
+                        start = "2006-01-01", end = "2012-12-31") %>% 
+  select(station_name, station_id, year, month, day,
+         max_temp, mean_temp, min_temp) %>% 
+  filter(year != 2009 & year != 2010)
+
+
+## Nipigon (1998-2010, ect 1999)
+#' 6. Nipigon: CAMERON FALLS (AUT); 27674; 1998-2010(ect 1999)
+nipigon <- weather_dl(station_ids = 27528, interval = "day", quiet = T,
+                      start = "1998-01-01", end = "2010-12-31") %>% 
+  select(station_name, station_id, year, month, day,
+         max_temp, mean_temp, min_temp) %>% 
+  filter(year != 1999)
+
 
 ## Still
+#' 7. Still: MONETVILLE; 4125; 2002-2008 (ect 03,06,07)
+still <- weather_dl(station_ids = 4125, interval = "day", quiet = T,
+                    start = "2002-01-01", end = "2008-12-31") %>% 
+  select(station_name, station_id, year, month, day,
+         max_temp, mean_temp, min_temp) %>% 
+  filter(year != 2003 & year != 2006 & year != 2007)
+
 
 ## Mississagi
+#' 8. Mississagi: GORE BAY CLIMATE (only 2010-2014); 48788; 2007-2014 (ect 2008,09)
+mississagi <- weather_dl(station_ids = 48788, interval = "day", quiet = T,
+                    start = "2010-01-01", end = "2014-12-31") %>% 
+  select(station_name, station_id, year, month, day,
+         max_temp, mean_temp, min_temp)
 
 
 
@@ -172,14 +213,107 @@ meteo_nearby_stations(
 #' 6. Genesee: ROCHESTER GTR INTL; USW00014768; 2011-2013
 
 
+
+
+#### Extract air temperature from NOAA stations ####
+
 ## St.Louis (2011-2014)
-st.louis <- meteo_tidy_ghcnd(stationid = ghcnd.list$id[1],
+stlouis <- meteo_tidy_ghcnd(stationid = ghcnd.list$id[1],
                                var = c("tmax","tmin"),
                                date_min = "2011-01-01", date_max = "2014-12-31") %>% 
   as.data.frame() %>% 
   mutate(station_id = id, year = format(date, "%Y"), month = format(date, "%m"),
-         day = format(date,"%d"), max_temp = max_temp/10, min_temp = min_temp/10) %>% 
-  select(station_id, date, year, month, day, max_temp, min_temp)
+         day = format(date,"%d"), max_temp = tmax/10, min_temp = tmin/10,
+         mean_temp = NA, station_name = ghcnd.list$name[1]) %>% 
+  select(station_name, station_id, year, month, day,
+         max_temp, mean_temp, min_temp)
 
-View(st.louis)
+View(stlouis)
+
+
+## Saginaw (2012-2014)
+saginaw <- meteo_tidy_ghcnd(stationid = ghcnd.list$id[2],
+                            var = c("tmax","tmin"),
+                            date_min = "2012-01-01", date_max = "2014-12-31") %>% 
+  as.data.frame() %>% 
+  mutate(station_id = id, year = format(date, "%Y"), month = format(date, "%m"),
+         day = format(date,"%d"), max_temp = tmax/10, min_temp = tmin/10,
+         mean_temp = NA, station_name = ghcnd.list$name[2]) %>% 
+  select(station_name, station_id, year, month, day,
+         max_temp, mean_temp, min_temp)
+
+View(saginaw)
+
+
+## Fox (2011-2014)
+fox <- meteo_tidy_ghcnd(stationid = ghcnd.list$id[3],
+                        var = c("tmax","tmin"),
+                        date_min = "2011-01-01", date_max = "2014-12-31") %>% 
+  as.data.frame() %>% 
+  mutate(station_id = id, year = format(date, "%Y"), month = format(date, "%m"),
+         day = format(date,"%d"), max_temp = tmax/10, min_temp = tmin/10,
+         mean_temp = NA, station_name = ghcnd.list$name[3]) %>% 
+  select(station_name, station_id, year, month, day,
+         max_temp, mean_temp, min_temp)
+
+View(fox)
+
+
+## Portage-Burns Waterway (2011-2012)
+pb <- meteo_tidy_ghcnd(stationid = ghcnd.list$id[4],
+                       var = c("tmax","tmin"),
+                       date_min = "2011-01-01", date_max = "2012-12-31") %>% 
+  as.data.frame() %>% 
+  mutate(station_id = id, year = format(date, "%Y"), month = format(date, "%m"),
+         day = format(date,"%d"), max_temp = tmax/10, min_temp = tmin/10,
+         mean_temp = NA, station_name = ghcnd.list$name[4]) %>% 
+  select(station_name, station_id, year, month, day,
+         max_temp, mean_temp, min_temp)
+
+View(pb)
+
+
+## vermilion (2012-2014)
+vermilion <- meteo_tidy_ghcnd(stationid = ghcnd.list$id[5],
+                              var = c("tmax","tmin"),
+                              date_min = "2012-01-01", date_max = "2014-12-31") %>% 
+  as.data.frame() %>% 
+  mutate(station_id = id, year = format(date, "%Y"), month = format(date, "%m"),
+         day = format(date,"%d"), max_temp = tmax/10, min_temp = tmin/10,
+         mean_temp = NA, station_name = ghcnd.list$name[5]) %>% 
+  select(station_name, station_id, year, month, day,
+         max_temp, mean_temp, min_temp)
+
+View(vermilion)
+
+
+## Genesee (2011-2013)
+genesee <- meteo_tidy_ghcnd(stationid = ghcnd.list$id[6],
+                            var = c("tmax","tmin"),
+                            date_min = "2011-01-01", date_max = "2013-12-31") %>% 
+  as.data.frame() %>% 
+  mutate(station_id = id, year = format(date, "%Y"), month = format(date, "%m"),
+         day = format(date,"%d"), max_temp = tmax/10, min_temp = tmin/10,
+         mean_temp = NA, station_name = ghcnd.list$name[6]) %>% 
+  select(station_name, station_id, year, month, day,
+         max_temp, mean_temp, min_temp)
+
+View(genesee)
+
+
+
+
+#### Combine all temperature output ####
+
+## Combine outputs from all locations
+results.df <- rbind(stlouis, saginaw, fox, pb, vermilion, genesee, bigcreek,
+                    bigotter, still, mississagi, nipigon, longpoint, portdover)
+
+View(results.df)
+
+
+## Export as csv
+write.csv(results.df, "tributary air temperatures clean.csv")
+
+
 
