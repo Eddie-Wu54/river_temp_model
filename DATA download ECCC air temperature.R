@@ -76,10 +76,9 @@ for (i in 1:nrow(tributary.loc)){
 #' 1. Big creek: DELHI CS; 27528; 2000-2014 (ect 2010,2011)
 bigcreek <- weather_dl(station_ids = 27528, interval = "day", quiet = T,
                        start = "2000-01-01", end = "2014-12-31") %>% 
-  select(station_name, station_id, year, month, day,
+  select(station_name, station_id, date, year, month, day,
          max_temp, mean_temp, min_temp) %>% 
   filter(year != 2010 & year != 2011)
-
 
 ## Big otter (2012-2014)
 #' 2. Big otter: TILLSONBURG NORTH; 27488; 2012-2014
