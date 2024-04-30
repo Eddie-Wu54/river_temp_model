@@ -266,7 +266,7 @@ pb <- meteo_tidy_ghcnd(stationid = ghcnd.list$id[4],
   mutate(station_id = id, year = format(date, "%Y"), month = format(date, "%m"),
          day = format(date,"%d"), max_temp = tmax/10, min_temp = tmin/10,
          mean_temp = NA, station_name = ghcnd.list$name[4]) %>% 
-  select(station_name, station_id, year, month, day,
+  select(station_name, station_id, date, year, month, day,
          max_temp, mean_temp, min_temp)
 
 View(pb)
@@ -280,7 +280,7 @@ vermilion <- meteo_tidy_ghcnd(stationid = ghcnd.list$id[5],
   mutate(station_id = id, year = format(date, "%Y"), month = format(date, "%m"),
          day = format(date,"%d"), max_temp = tmax/10, min_temp = tmin/10,
          mean_temp = NA, station_name = ghcnd.list$name[5]) %>% 
-  select(station_name, station_id, year, month, day,
+  select(station_name, station_id, date, year, month, day,
          max_temp, mean_temp, min_temp)
 
 View(vermilion)
@@ -294,7 +294,7 @@ genesee <- meteo_tidy_ghcnd(stationid = ghcnd.list$id[6],
   mutate(station_id = id, year = format(date, "%Y"), month = format(date, "%m"),
          day = format(date,"%d"), max_temp = tmax/10, min_temp = tmin/10,
          mean_temp = NA, station_name = ghcnd.list$name[6]) %>% 
-  select(station_name, station_id, year, month, day,
+  select(station_name, station_id, date, year, month, day,
          max_temp, mean_temp, min_temp)
 
 View(genesee)
@@ -306,9 +306,10 @@ View(genesee)
 
 ## Combine outputs from all locations
 results.df <- rbind(stlouis, saginaw, fox, pb, vermilion, genesee, bigcreek,
-                    bigotter, still, mississagi, nipigon, longpoint, portdover)
+                    bigotter, still, mississagi, humber, nipigon, longpoint, portdover)
 
 View(results.df)
+str(results.df)
 
 
 ## Export as csv
