@@ -80,11 +80,12 @@ bigcreek <- weather_dl(station_ids = 27528, interval = "day", quiet = T,
          max_temp, mean_temp, min_temp) %>% 
   filter(year != 2010 & year != 2011)
 
+
 ## Big otter (2012-2014)
 #' 2. Big otter: TILLSONBURG NORTH; 27488; 2012-2014
 bigotter <- weather_dl(station_ids = 27488, interval = "day", quiet = T,
                         start = "2012-01-01", end = "2014-12-31") %>% 
-  select(station_name, station_id, year, month, day,
+  select(station_name, station_id, date, year, month, day,
          max_temp, mean_temp, min_temp)
 
 
@@ -92,7 +93,7 @@ bigotter <- weather_dl(station_ids = 27488, interval = "day", quiet = T,
 #' 3. Humber: TORONTO LESTER B. PEARSON INT'L A; 5097; 1998-2013 (ect 2004,2010)
 humber <- weather_dl(station_ids = 5097, interval = "day", quiet = T,
                      start = "1998-01-01", end = "2013-12-31") %>% 
-  select(station_name, station_id, year, month, day,
+  select(station_name, station_id, date, year, month, day,
          max_temp, mean_temp, min_temp) %>% 
   filter(year != 2004 & year != 2010)
 
@@ -101,23 +102,24 @@ humber <- weather_dl(station_ids = 5097, interval = "day", quiet = T,
 #' 4. Long point: LONG POINT(AUT) (do not have 04-05 data); 9026; 2004-2009
 longpoint <- weather_dl(station_ids = 9026, interval = "day", quiet = T,
                         start = "2006-01-01", end = "2009-12-31") %>% 
-  select(station_name, station_id, year, month, day,
+  select(station_name, station_id, date, year, month, day,
          max_temp, mean_temp, min_temp)
 
 
 ## Port Dover (2006-2012, ect 09,10)
-portdover <- weather_dl(station_ids = 27674, interval = "day", quiet = T,
+portdover <- weather_dl(station_ids = 27528, interval = "day", quiet = T,
                         start = "2006-01-01", end = "2012-12-31") %>% 
-  select(station_name, station_id, year, month, day,
+  select(station_name, station_id, date, year, month, day,
          max_temp, mean_temp, min_temp) %>% 
-  filter(year != 2009 & year != 2010)
+  filter(year != 2009 & year != 2010) %>% 
+  mutate(station_name = "DELHI CS_PD") # To distinguish from big creek
 
 
 ## Nipigon (1998-2010, ect 1999)
 #' 6. Nipigon: CAMERON FALLS (AUT); 27674; 1998-2010(ect 1999)
-nipigon <- weather_dl(station_ids = 27528, interval = "day", quiet = T,
+nipigon <- weather_dl(station_ids = 27674, interval = "day", quiet = T,
                       start = "1998-01-01", end = "2010-12-31") %>% 
-  select(station_name, station_id, year, month, day,
+  select(station_name, station_id, date, year, month, day,
          max_temp, mean_temp, min_temp) %>% 
   filter(year != 1999)
 
@@ -126,7 +128,7 @@ nipigon <- weather_dl(station_ids = 27528, interval = "day", quiet = T,
 #' 7. Still: MONETVILLE; 4125; 2002-2008 (ect 03,06,07)
 still <- weather_dl(station_ids = 4125, interval = "day", quiet = T,
                     start = "2002-01-01", end = "2008-12-31") %>% 
-  select(station_name, station_id, year, month, day,
+  select(station_name, station_id, date, year, month, day,
          max_temp, mean_temp, min_temp) %>% 
   filter(year != 2003 & year != 2006 & year != 2007)
 
@@ -135,7 +137,7 @@ still <- weather_dl(station_ids = 4125, interval = "day", quiet = T,
 #' 8. Mississagi: GORE BAY CLIMATE (only 2010-2014); 48788; 2007-2014 (ect 2008,09)
 mississagi <- weather_dl(station_ids = 48788, interval = "day", quiet = T,
                     start = "2010-01-01", end = "2014-12-31") %>% 
-  select(station_name, station_id, year, month, day,
+  select(station_name, station_id, date, year, month, day,
          max_temp, mean_temp, min_temp)
 
 
@@ -224,7 +226,7 @@ stlouis <- meteo_tidy_ghcnd(stationid = ghcnd.list$id[1],
   mutate(station_id = id, year = format(date, "%Y"), month = format(date, "%m"),
          day = format(date,"%d"), max_temp = tmax/10, min_temp = tmin/10,
          mean_temp = NA, station_name = ghcnd.list$name[1]) %>% 
-  select(station_name, station_id, year, month, day,
+  select(station_name, station_id, date, year, month, day,
          max_temp, mean_temp, min_temp)
 
 View(stlouis)
@@ -238,7 +240,7 @@ saginaw <- meteo_tidy_ghcnd(stationid = ghcnd.list$id[2],
   mutate(station_id = id, year = format(date, "%Y"), month = format(date, "%m"),
          day = format(date,"%d"), max_temp = tmax/10, min_temp = tmin/10,
          mean_temp = NA, station_name = ghcnd.list$name[2]) %>% 
-  select(station_name, station_id, year, month, day,
+  select(station_name, station_id, date, year, month, day,
          max_temp, mean_temp, min_temp)
 
 View(saginaw)
@@ -252,7 +254,7 @@ fox <- meteo_tidy_ghcnd(stationid = ghcnd.list$id[3],
   mutate(station_id = id, year = format(date, "%Y"), month = format(date, "%m"),
          day = format(date,"%d"), max_temp = tmax/10, min_temp = tmin/10,
          mean_temp = NA, station_name = ghcnd.list$name[3]) %>% 
-  select(station_name, station_id, year, month, day,
+  select(station_name, station_id, date, year, month, day,
          max_temp, mean_temp, min_temp)
 
 View(fox)
