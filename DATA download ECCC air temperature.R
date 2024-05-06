@@ -1,5 +1,6 @@
 #' This script is used to obtain the air temperature data from
-#' Environmental and Climate Change Canada (ECCC).
+#' Environmental and Climate Change Canada (ECCC) for Canadian locations,
+#' and NOAA.fro US locations.
 
 
 
@@ -68,9 +69,7 @@ for (i in 1:nrow(tributary.loc)){
 
 
 
-
 #### Extract air temperature from ECCC stations ####
-
 
 ## Big creek (2000-2009, 2012-2014)
 #' 1. Big creek: DELHI CS; 27528; 2000-2014 (ect 2010,2011)
@@ -163,7 +162,6 @@ stations <- ghcnd_stations() %>%
 
 
 # Loop for each location
-
 for (i in 1:nrow(tributary.loc.noaa)){
   
   current <- tributary.loc.noaa[i,]
@@ -212,7 +210,6 @@ meteo_nearby_stations(
 #' 4. Portage-Burns Waterway: INDIANA DUNES NP; USC00124244; 2011-2012
 #' 5. Vermilion: ELYRIA LORAIN CO AP; USW00004849; 2012-2014
 #' 6. Genesee: ROCHESTER GTR INTL; USW00014768; 2011-2013
-
 
 
 
