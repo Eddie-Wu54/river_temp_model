@@ -1,13 +1,15 @@
 #' This script is used to obtain the air temperature data from
 #' Environmental and Climate Change Canada (ECCC) for Canadian locations,
-#' and NOAA.fro US locations.
+#' and NOAA.from US locations.
 
 
+{
+  library(weathercan)
+  library(rnoaa)
+  library(geosphere)
+  library(dplyr)
+}
 
-library(weathercan)
-library(rnoaa)
-library(geosphere)
-library(dplyr)
 
 
 #### Find the ECCC weather stations (8 sites) ####
@@ -62,7 +64,7 @@ for (i in 1:nrow(tributary.loc)){
 #' 5. Port dover: DELHI CS; 27528; 2006-2012 (ect 09,10)
 #' 6. Nipigon: CAMERON FALLS (AUT); 27674; 1998-2010(ect 1999)
 #' 7. Still: MONETVILLE; 4125; 2002-2008 (ect 03,06,07)
-#' 8. Mississagi: GORE BAY CLIMATE (only 2010-2014); 48788; 2007-2014 (ect 2008,09)
+#' 8. Mississagi: GORE BAY CLIMATE (only 2010-2014); ; 2007-2014 (ect 2008,09)
 
 #' Locations that do not have corresponding weather stations:
 #' St.louis; Fox; Vermilion; PB; Saginaw; Genesee
