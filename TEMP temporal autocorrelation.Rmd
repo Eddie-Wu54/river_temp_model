@@ -1,0 +1,652 @@
+---
+title: "Temporal autocorrelation"
+author: "Eddie Wu"
+date: "`r Sys.Date()`"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, dev = "jpeg", dpi = 300)
+```
+
+```{r library, warning=FALSE, message=FALSE}
+library(dplyr)
+library(tidyverse)
+library(lme4)
+library(nlme)
+library(xts)
+library(ModelMetrics)
+library(zoo)
+library(lubridate)
+library(ggpubr)
+library(performance) #for easy diagnostic plotting
+```
+
+```{r functions}
+cal.rmse <- function(out.list, fold) {
+  
+  # data frame to store the results
+  r <- matrix(NA, nrow=fold, ncol=length(unique(out.list[[1]]$location)))
+  colnames(r) <- unique(out.list[[1]]$location)
+  
+  # 10 iterations
+  for (i in 1:fold){
+   compare <- out.list[[i]]
+    
+   # calculate rmse
+   for (loc in unique(compare$location)) {
+     compare.now <- subset(compare, location == loc) %>% na.omit()
+     r[i,loc] <- ModelMetrics::rmse(compare.now$obs, compare.now$preds)
+    }
+  }
+  return(r)
+}
+cal.nsc <- function(out.list, fold) {
+  
+  # dataframe to store the results
+  r <- matrix(NA, nrow=fold, ncol=length(unique(out.list[[1]]$location)))
+  colnames(r) <- unique(out.list[[1]]$location)
+  
+  # 10 iterations
+  for (i in 1:fold){
+   compare <- out.list[[i]]
+    
+   # calculate nsc
+   for (loc in unique(compare$location)) {
+     compare.now <- subset(compare, location == loc) %>% na.omit()
+     nsc <- 1 - sum((compare.now$obs - compare.now$preds)^2) / sum((compare.now$obs - mean(compare.now$obs))^2)
+     r[i,loc] <- nsc
+    }
+  }
+  return(r)
+}
+get.traintest <- function(master.df, fold) {
+  ## Subsetting
+  df_by_location <- split(master.df, master.df$location)
+  df_by_location <- df_by_location[sapply(df_by_location, function(x)
+    !is.null(x) && nrow(x) > 0)]
+
+  combined_training_list <- vector("list",fold)
+  combined_testing_list <- vector("list",fold)
+
+  ## Loop
+  for (f in 1:fold) {
+  
+    for (loc in 1:length(df_by_location)) {
+      # Subset the current location data, and get train/test
+      current <- df_by_location[[loc]]
+      loc_training <- current[current$year == sample(current$year, 1),]
+      loc_testing <- current[current$year == sample(current$year, 1),]
+      # Add to the combined list
+      combined_training_list[[f]] <- rbind(
+        combined_training_list[[f]], loc_training)
+      combined_testing_list[[f]] <- rbind(
+        combined_testing_list[[f]], loc_testing)
+    }
+  
+    combined_training_list[[f]]$year <-
+      as.factor(combined_training_list[[f]]$year)
+    combined_testing_list[[f]]$year <-
+      as.factor(combined_testing_list[[f]]$year)
+  }
+  return(list(combined_training_list, combined_testing_list))
+}
+
+```
+
+## Data importing and cleaning
+
+```{r data import}
+## Data import
+airtemp <- read.csv("tributary air temperatures clean.csv")
+watertemp <- read.csv("tributary water temperature/water_temperature_d.csv")
+flow <- read.csv("tributary discharge.csv")
+
+# Convert to date format
+airtemp$date <- as.Date(airtemp$date, format = "%m/%d/%Y")
+watertemp$date <- as.Date(watertemp$date, format = "%m/%d/%Y")
+flow$date <- as.Date(flow$date, format = "%m/%d/%Y")
+
+
+table(airtemp$station_name)
+table(watertemp$station_name)
+table(watertemp$location)
+table(flow$location)
+
+
+## Calculate the MEAN airT for US locations
+for (i in which(is.na(airtemp$mean_temp))) {
+  airtemp$mean_temp <- (airtemp$max_temp + airtemp$min_temp) / 2
+}
+```
+
+
+### Check for imputed values
+
+Use a 7-days rolling mean to check for possibly imputed temperatures. If the variance of a certain day's temperature is very close to zero, then it is likely that this particular data is imputed.
+
+```{r impute check}
+# make sure that no initial NA values in watertemp
+which(is.na(watertemp$location))
+
+# Need to calculate the rolling mean for each location separately...
+watertemp$location <- as.factor(watertemp$location)
+unique_locations <- unique(watertemp$location)
+
+for(loc in unique_locations) {
+  sub <- watertemp[watertemp$location == loc,]
+  sub$rolling_mean <- rollmean(sub$temp, k = 7, fill = NA, align = "right")
+  watertemp[watertemp$location == loc, "rolling_mean"] <- sub$rolling_mean
+}
+
+# Calculate variance
+watertemp$variance <- (watertemp$temp - watertemp$rolling_mean)^2
+
+# Assign NA when variance is very small
+watertemp$temp[which(watertemp$variance < 1e-10)] <- NA
+```
+
+
+### Data cleaning and combining
+
+Now we want to combine airT, waterT, and flow into a master dataframe
+
+```{r data combine}
+# Combine water temperature and discharge
+water <- left_join(watertemp, flow, by = c("location","date"))
+
+master.temp <- left_join(airtemp, water, by = c("station_name", "date")) %>%
+  select(location, country, station_name, date, year, month = month.x,
+         day = day.x, airT = mean_temp, waterT = temp, flow) %>% 
+  na.omit() %>% 
+  arrange(location, date) # arrange by location and date
+
+
+## Check for duplicates
+duplicates <- master.temp %>%
+  group_by(location, date) %>%
+  filter(n() > 1) # Duplicates should be NA...
+
+
+## Check the time range for each location
+time_range_per_location <- master.temp %>%
+  group_by(location) %>%
+  summarize(
+    start_date = min(date),
+    end_date = max(date)
+  )
+
+# Print the result
+print(time_range_per_location)
+```
+
+### Get three years
+
+We try to subset three years of data for each location, as closely possible as to 2014.
+
+```{r}
+## Get only three years for each location
+start_end <- read.csv("start_end.csv")
+
+# Pivot to long
+start_end_long <- start_end %>%
+  pivot_longer(cols = starts_with("year"),
+               names_to = "rank", names_prefix = "year",
+               values_to = "year") %>% 
+  filter(year != 0) # still river only has two years
+
+# Semi-combine
+master.temp <- master.temp %>%
+  semi_join(start_end_long, by = c("location", "year"))
+
+table(master.temp$location)
+
+
+## Check for complete records
+# Generate a complete sequence of dates for each location/year
+complete_dates <- master.temp %>%
+  group_by(location, year) %>%
+  summarize(start_date = min(date), end_date = max(date),
+            .groups = "drop") %>%
+  rowwise() %>%
+  mutate(all_dates = list(seq.Date(from = start_date, to = end_date,
+                                   by = "day"))) %>%
+  select(location, all_dates) %>%
+  unnest(all_dates)
+
+# Join with the original dataframe to find missing dates and fill with NAs
+master.temp.c <- complete_dates %>%
+  left_join(master.temp, by = c("location", "all_dates" = "date")) %>%
+  rename(date = all_dates)
+
+
+table(master.temp.c$location)
+```
+
+### Get lagged days
+
+```{r lagged days}
+## Get the time lag day variables
+master.temp.c <- master.temp.c %>%
+  group_by(location) %>%
+  mutate(airT.lag1 = lag(airT, 1),
+         airT.lag2 = lag(airT, 2),
+         airT.lag3 = lag(airT, 3),
+         airT.lag4 = lag(airT, 4),
+         airT.lag5 = lag(airT, 5))
+
+
+## Change the location into factors
+master.temp.c$location <- as.factor(master.temp.c$location)
+table(master.temp.c$location)
+
+master.temp.c$country <- as.factor(master.temp.c$country)
+```
+
+
+## Data plots
+
+Before we run any analysis, we first want to check whether the air temperature and lags are corrected calculated.
+
+```{r temp plots, warning = FALSE}
+colors <- c("airT.lag1" = "darkgreen", "airT.lag5" = "red", "waterT" = "black")
+
+for (loc in levels(master.temp.c$location)) {
+  
+  plot.df <- master.temp.c %>% filter(location == loc)
+  
+  pl <- ggplot(plot.df, aes(x = date))+
+          geom_line(aes(y = airT.lag1, color = "airT.lag1"), alpha = 0.5)+
+          geom_line(aes(y = airT.lag5, color = "airT.lag5"), alpha = 0.5)+
+          geom_line(aes(y = waterT, color = "waterT"), linewidth = 0.8)+
+          labs(x="date", y="temperature")+
+          ggtitle(paste(loc))+
+          scale_color_manual(values = colors)+
+          theme_bw()
+  
+  print(pl)
+}
+```
+
+
+
+## Get training and testing (for season and ann### Subsetting seasonal scales
+
+Now we want to subset four master dataframes that contains seasonal-scale data. We categorize the data into four different seasonal categories:
+
+1. spring: 3,4,5
+2. summer: 6,7,8
+3. fall: 9,10,11
+4. winter: 12,1,2
+
+```{r subset season}
+master.sum <- master.temp.c %>% 
+  filter(month == 6 | month == 7 | month == 8)
+
+master.win <- master.temp.c %>% 
+  filter(month == 12 | month == 1 | month == 2)
+
+master.spring <- master.temp.c %>% 
+  filter(month == 3 | month == 4 | month == 5)
+
+master.fall <- master.temp.c %>% 
+  filter(month == 9 | month == 10 | month == 11)
+```
+
+
+
+### Get training and testing
+
+Get training and testing for the specific season, and for annual. We store them in one master dataframe called grand_training and grand_testing, each is a list of five sub-temporal data.
+
+```{r get training and testing}
+fold = 10
+
+## Get training and testing for annual
+annual <- get.traintest(master.temp.c, 10)
+
+combined_training_list <- annual[[1]]
+combined_testing_list <- annual[[2]]
+
+
+## Get training and testing for each season
+sum <- get.traintest(master.sum, 10)
+win <- get.traintest(master.win, 10)
+spr <- get.traintest(master.spring, 10)
+fall <- get.traintest(master.fall, 10)
+
+combined_training_list_sp <- spr[[1]]
+combined_testing_list_sp <- spr[[2]]
+
+combined_training_list_su <- sum[[1]]
+combined_testing_list_su <- sum[[2]]
+
+combined_training_list_fa <- fall[[1]]
+combined_testing_list_fa <- fall[[2]]
+
+combined_training_list_w <- win[[1]]
+combined_testing_list_w <- win[[2]]
+
+
+## Create a list to store all the combined training and testing lists
+grand_training <- list(combined_training_list_sp, combined_training_list_su,
+                       combined_training_list_fa, combined_training_list_w,
+                       combined_training_list)
+
+grand_testing <- list(combined_testing_list_sp, combined_testing_list_su,
+                       combined_testing_list_fa, combined_testing_list_w,
+                       combined_testing_list)
+```
+
+
+**NOTE: All following models are done for one iteration only (using only i=1)!**
+
+
+
+### Specify the season
+
+Here, we use this code to identify the specific season used to run model and check temporal autocorrelation.
+
+**Note: season 1-5: spring, summer, fall, winter, annual**
+
+```{r specify season used}
+i = 1
+season = 4
+
+# select current dataset, and all unique location levels
+current.training <- grand_training[[season]][[i]]
+current.testing <- grand_testing[[season]][[i]] %>% na.omit()
+```
+
+
+
+## Multiple linear regression models with lag
+
+### Linear regression lag 3
+
+```{r lag3 mixed}
+## Forms
+form.locrandom <- waterT ~ airT.lag1 + airT.lag2 + airT.lag3
+compare <- NA
+
+# model training and predicting
+model <- lme(fixed = form.locrandom,
+             random = ~ 1 | location,
+             na.action = na.omit, data = current.training)
+preds <- predict(model, newdata = current.testing,
+                 na.action = na.omit)
+p <- as.data.frame(preds)
+
+# Include AR term
+model.ar <- lme(fixed = form.locrandom,
+                random = ~ 1 | location,
+                na.action = na.omit, data = current.training,
+                correlation=corAR1(form=~1|location, value=0.8, fixed=T))
+preds.ar <- predict(model.ar, newdata = current.testing,
+                    na.action = na.omit)
+p.ar <- as.data.frame(preds.ar)
+
+# compare dataframe output
+compare <- cbind(current.testing,preds=p$preds,preds.ar=p.ar$preds.ar) %>% 
+  select(location, date, obs = waterT, preds, preds.ar)
+
+
+## Plot ACF
+ggarrange(plot(ACF(model,resType="normalized"),alpha=0.05),
+        plot(ACF(model.ar,resType="normalized"),alpha=0.05),
+        nrow = 1)
+
+
+## Plots
+plot.df <- compare %>% filter(location == "bigcreek")
+
+ggplot(data=plot.df, aes(x=date))+
+  geom_line(aes(x=date, y=obs), color = "black")+
+  geom_line(aes(x=date, y=preds), color = "red")+
+  geom_line(aes(x=date, y=preds.ar), color = "blue")
+
+check_model(model)
+check_model(model.ar)
+
+
+## Metrics calculation
+ModelMetrics::rmse(compare$preds, compare$obs)
+ModelMetrics::rmse(compare$preds.ar, compare$obs)
+```
+
+Linear lag 3 model definitely does not perform better compared to the linear lag 5 model.
+
+
+
+### Linear regression lag 5
+
+Now, let's use a multiple linear (lag 5) mixed model with location as random effect.
+
+```{r lag5 mixed}
+## Forms
+form.locrandom <- waterT ~ airT.lag1 + airT.lag2 + airT.lag3 + airT.lag4 + airT.lag5
+compare <- NA
+
+# model training and predicting
+model <- lme(fixed = form.locrandom,
+             random = ~1 | location,
+             na.action = na.omit, data = current.training)
+preds <- predict(model, newdata = current.testing,
+                 na.action = na.omit)
+p <- as.data.frame(preds)
+
+# Include AR term
+model.ar <- lme(fixed = form.locrandom,
+                random = ~1 | location,
+                na.action = na.omit, data = current.training,
+                correlation=corAR1(form=~1|location, value = 0.8, fixed=T))
+preds.ar <- predict(model.ar, newdata = current.testing,
+                    na.action = na.omit)
+p.ar <- as.data.frame(preds.ar)
+
+# compare dataframe output
+compare <- cbind(current.testing,preds=p$preds,preds.ar=p.ar$preds.ar) %>% 
+  select(location, date, obs = waterT, preds, preds.ar)
+
+
+## Plot ACF
+ggarrange(plot(ACF(model,resType="normalized"),alpha=0.05),
+        plot(ACF(model.ar,resType="normalized"),alpha=0.05),
+        nrow = 1)
+
+check_model(model)
+check_model(model.ar)
+
+
+## Plots
+plot.df <- compare %>% filter(location == "bigcreek")
+
+ggplot(data=plot.df, aes(x=date))+
+  geom_line(aes(x=date, y=obs), color = "black")+
+  geom_line(aes(x=date, y=preds), color = "red")+
+  geom_line(aes(x=date, y=preds.ar), color = "blue")
+
+
+## Metrics calculation
+ModelMetrics::rmse(compare$preds, compare$obs)
+ModelMetrics::rmse(compare$preds.ar, compare$obs)
+
+anova(model, model.ar)
+```
+
+1. Temporal autocorrelation: The autocorrelation in summer and winter is reduced to a decent amount. In spring and fall, it has some degree of autocorrelation at day 6-10, but low at day 5.
+
+2. The winter prediction is relatively good, but it does not capture large daily variation. Meanwhile, residuals at two ends seems not normally distributed.
+
+
+
+
+## Reasonal residual
+
+```{r seasonal residual}
+compare <- NA
+
+## TRAINING
+# get the model annual component
+annual.comp <- nls(airT ~ a+b*sin(2*pi/365*(yday(date)+t0)),
+                   start = list(a=0.05, b=5, t0=-26),
+                   data=current.training)
+
+# get the air temperature residuals
+res <- as.data.frame(matrix(NA, ncol = 2, 
+                            nrow = length(na.omit(current.training$airT))))
+# dataframe to store the residuals
+colnames(res) <- c("res.t", "location")
+res[,"location"] <- na.omit(current.training$location)
+res[,"res.t"] <- as.vector(residuals(annual.comp))
+res <- res %>% group_by(location) %>%
+  mutate(res.t1 = lag(res.t, 1),
+         res.t2 = lag(res.t, 2))
+res[,"res.w"] <- residuals(nls(waterT ~ a+b*sin(2*pi/365*(yday(date)+t0)),
+                               start = list(a=0.05, b=5, t0=-26),
+                               data = current.training))
+
+# get the water temperature residual component
+residual.comp <- lme(fixed = res.w ~ res.t + res.t1 + res.t2,
+                     random = ~ 1|location,
+                     data = res, na.action = na.omit)
+
+residual.comp.ar <- lme(fixed = res.w ~ res.t + res.t1 + res.t2,
+                        random = ~ 1|location,
+                        correlation = corAR1(form=~1|location,value=0.8, fixed=TRUE),
+                        data = res, na.action = na.omit)
+
+
+## TESTING
+# Annual
+preds.annual <- as.data.frame(predict(annual.comp, newdata=current.testing))
+preds.annual <- cbind(preds.annual, current.testing$location)
+colnames(preds.annual) <- c("preds.annual", "location")
+
+# Residuals
+res <- as.data.frame(matrix(NA, ncol = 2, 
+                            nrow = length(current.testing$airT))) #residuals
+colnames(res) <- c("res.t", "location")
+res[,"location"] <- current.testing$location
+res[,"res.t"] <- current.testing$airT - preds.annual$preds.annual
+res <- res %>% group_by(location) %>%
+  mutate(res.t1 = lag(res.t, 1),
+         res.t2 = lag(res.t, 2))
+
+# Residuals
+preds.residuals <- predict(residual.comp, newdata=res, na.action=na.omit,
+                           re.form=~(1|location))
+preds.residuals <- cbind(as.data.frame(preds.residuals), na.omit(res)[,"location"])
+preds.residuals.ar <- predict(residual.comp.ar, 
+                              newdata=res, na.action=na.omit,
+                              re.form=~(1|location))
+preds.residuals.ar <- cbind(as.data.frame(preds.residuals.ar), na.omit(res)[,"location"])
+
+
+# Combine and add up both components
+preds.annual.short <- preds.annual %>%
+  group_by(location) %>% filter(row_number()>2) #remove first two rows for each locations
+
+p <- cbind(preds.annual.short, preds.residuals,preds.residuals.ar) %>% 
+  mutate(preds = preds.annual + preds.residuals,
+         preds.ar = preds.annual + preds.residuals.ar)
+
+# Create a comparison dataframe
+current.testing <- current.testing %>% 
+  group_by(location) %>% filter(row_number()>2) #remove first two rows for each locations
+
+compare <- cbind(current.testing, p) %>% 
+  select(location = location...1, date, obs = waterT, preds, preds.ar)
+
+## Plot ACF
+ggarrange(plot(ACF(residual.comp,resType="normalized"),alpha=0.05),
+          plot(ACF(residual.comp.ar,resType="normalized"),alpha=0.05),
+        nrow = 1)
+
+check_model(residual.comp)
+check_model(residual.comp.ar)
+
+
+## Plots
+plot.df <- compare %>% filter(location == "bigotter")
+
+ggplot(data=plot.df, aes(x=date))+
+  geom_line(aes(x=date, y=obs), color = "black")+
+  geom_line(aes(x=date, y=preds), color = "red")+
+  geom_line(aes(x=date, y=preds.ar), color = "blue")
+
+
+## Metrics calculation
+ModelMetrics::rmse(compare$preds, compare$obs)
+ModelMetrics::rmse(compare$preds.ar, compare$obs)
+
+anova(residual.comp, residual.comp.ar)
+```
+
+1. Temporal autocorrelation: Set phi=0.8 largely reduced temporal autocorrelation to an acceptable level for all seasons.
+
+2. Gives good estimation for spring, summer, and fall. In late fall and winter, the model tends to underestimate the temperature.
+
+3. In general, this model cannot capture the detailed daily variation when set phi at a reasonably high level.
+
+
+
+## Lag model with flow variable
+
+*We determined in the TEMP simple regression with flow.R that including inverse flow as input is the best model with AIC selection.*
+
+So here, let's try the multiple linear regression lag 5 model with daily inverse flow as a separate input.
+
+```{r flow mixed}
+## Forms
+form.locrandom <- waterT ~ airT.lag1 + airT.lag2 + airT.lag3 + airT.lag4 + airT.lag5 + I(1/flow)
+compare <- NA
+
+# model training and predicting
+model <- lme(fixed = form.locrandom,
+             random = ~1 | location,
+             na.action = na.omit, data = current.training)
+preds <- predict(model, newdata = current.testing,
+                 na.action = na.omit)
+p <- as.data.frame(preds)
+
+# Include AR term
+model.ar <- lme(fixed = form.locrandom,
+                random = ~1 | location,
+                na.action = na.omit, data = current.training,
+                correlation=corAR1(form=~1|location, value=0.8, fixed=T))
+preds.ar <- predict(model.ar, newdata = current.testing,
+                    na.action = na.omit)
+p.ar <- as.data.frame(preds.ar)
+
+# compare dataframe output
+compare <- cbind(current.testing,preds=p$preds,preds.ar=p.ar$preds.ar) %>% 
+  select(location, date, obs = waterT, preds, preds.ar)
+
+
+## Plot ACF
+ggarrange(plot(ACF(model,resType="normalized"),alpha=0.05),
+        plot(ACF(model.ar,resType="normalized"),alpha=0.05),
+        nrow = 1)
+
+check_model(model)
+check_model(model.ar)
+
+
+## Plots
+plot.df <- compare %>% filter(location == "bigcreek")
+
+ggplot(data=plot.df, aes(x=date))+
+  geom_line(aes(x=date, y=obs), color = "black")+
+  geom_line(aes(x=date, y=preds), color = "red")+
+  geom_line(aes(x=date, y=preds.ar), color = "blue")
+
+
+## Metrics calculation
+ModelMetrics::rmse(compare$preds, compare$obs)
+ModelMetrics::rmse(compare$preds.ar, compare$obs)
+
+anova(model, model.ar)
+```
+
+Overall, very similar results compared to the linear lag5 model. The model performance do not improve too much after include inverse flow as a extra input.
