@@ -1,15 +1,15 @@
-tributary name,corresponding lake,longitude,latitude,start,end
-St.Louis River,Superior,-92.4188018,46.7032765,2011,2014
-Saginaw River,Huron,-83.951918,43.4219699,2012,2014
-Fox River,Michigan,-88.01,44.5286111,2011,2014
-Portage-Burns Waterway,Michigan,-87.1758685,41.62225939,2011,2012
-Vermilion River,Erie,-82.3168273,41.38199,2012,2014
-Genesee River,Ontario,-77.6163056,43.1417222,2011,2013
-Big Creek River,Erie,-80.503696,42.758854,2000,2014
-Big Otter Creek,Erie,-80.83284,42.74562,2012,2014
-Still River,Huron,-80.52387,45.80893,2002,2008
-Mississagi River,Huron,-83.290802,46.315399,2007,2014
-Nipigon River,Superior,-88.358543,49.135601,1998,2010
-Humber River,Ontario,-79.495652,43.652139,1998,2013
-Long Point (Inner Bay),Erie,-80.3583,42.6211,2004,2009
-Port Dover,Erie,-80.2152,42.7793,2006,2012
+tributary name,corresponding lake,longitude,latitude,start,end,country
+St.Louis River,Superior,-92.4188018,46.7032765,2011,2014,us
+Saginaw River,Huron,-83.951918,43.4219699,2012,2014,us
+Fox River,Michigan,-88.01,44.5286111,2011,2014,us
+Portage-Burns Waterway,Michigan,-87.1758685,41.62225939,2011,2012,us
+Vermilion River,Erie,-82.3168273,41.38199,2012,2014,us
+Genesee River,Ontario,-77.6163056,43.1417222,2011,2013,us
+Big Creek River,Erie,-80.503696,42.758854,2000,2014,ca
+Big Otter Creek,Erie,-80.83284,42.74562,2012,2014,ca
+Still River,Huron,-80.52387,45.80893,2002,2008,ca
+Mississagi River,Huron,-83.290802,46.315399,2007,2014,ca
+Nipigon River,Superior,-88.358543,49.135601,1998,2010,ca
+Humber River,Ontario,-79.495652,43.652139,1998,2013,ca
+Long Point (Inner Bay),Erie,-80.3583,42.6211,2004,2009,ca
+Port Dover,Erie,-80.2152,42.7793,2006,2012,ca
