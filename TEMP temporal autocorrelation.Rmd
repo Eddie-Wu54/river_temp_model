@@ -229,16 +229,19 @@ master.spring <- master.temp %>%
 
 master.fall <- master.temp %>% 
   filter(month == 9 | month == 10 | month == 11)
+
+master.annual <- master.temp %>% 
+  filter(month != 12 & month != 1 & month != 2)
 ```
 
 
 ### Identify good years
 
-Get years that contain more than 250 days of temperature record for each location.
+We want the seasonal data to be greater than 60 days, annual data (winter removed) more than 180 days.
 
 ```{r good years}
 ## Annual (250 days)
-fulyear <- good_year(master.temp, 250)
+fulyear <- good_year(master.annual, 180)
 
 ## Seasonal (60 days)
 fulspring <- good_year(master.spring, 60)
@@ -356,12 +359,6 @@ ctrl = lmeControl(opt='optim')
 # select current dataset, and all unique location levels
 current.training <- grand_training[[season]][[i]] %>% arrange(location, date)
 current.testing <- grand_testing[[season]][[i]] %>% arrange(location, date)
-
-
-# option to subset annual training/testing without winter
-#current.training <- combined_training_list[[i]] %>% arrange(location, date) %>% filter(month != 12 & month != 1 & month != 2)
-#current.testing <- combined_testing_list[[i]] %>% arrange(location, date) %>% filter(month != 12 & month != 1 & month != 2)
-
 ```
 
 
