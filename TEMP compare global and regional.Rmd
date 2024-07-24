@@ -1,0 +1,578 @@
+---
+title: "Global and regional temperature model comparison"
+author: "Eddie Wu"
+date: "`r Sys.Date()`"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Introduction
+
+This R markdown file is used to 
+
+1. Import and clean global water temperature model
+
+2. Compare the weekly performance of a non-linear model and the global futureStreams river temperature model on a different seasonal scales (spring, summer, fall, annual).
+
+
+```{r library, warning=FALSE, message=FALSE}
+library(dplyr)
+library(tidyverse)
+library(lme4)
+library(nlme)
+library(xts)
+library(ModelMetrics)
+library(zoo)
+library(lubridate)
+library(nls2)
+```
+
+```{r functions}
+get.traintest <- function(master.df, year.list, fold) {
+  
+  # create output
+  combined_training_list <- vector("list",fold)
+  combined_testing_list <- vector("list",fold)
+  
+  ## Loop 10 folds
+  for (f in 1:fold) {
+    
+    # dataframe to store the sampled years for each location
+    dfind = data.frame(location=character(),
+                     year=integer(), stringsAsFactors = FALSE)
+    dfindt = data.frame(location=character(),
+                     year=integer(), stringsAsFactors = FALSE)
+    
+    for (i in 1:length(year.list)){ # i loops through each location
+      smp = year.list[[i]] #train
+      if (length(smp)>1){
+        indx.train=(sample(smp, 1))
+        ytrain=indx.train
+      } else if (length(smp)==1){
+        indx.train=smp
+        ytrain=indx.train
+      }
+      
+      smpt = year.list[[i]][year.list[[i]] != indx.train] #test
+      if (length(smpt)>1){
+        indx.test=(sample(smpt, 1))
+        ytest=indx.test
+      } else if (length(smpt)==1){
+        indx.test=smpt
+        ytest=indx.test
+      }
+      
+      dfind[i,] = c(names(year.list[i]), ytrain)
+      dfindt[i,] = c(names(year.list[i]), ytest)
+    }
+    
+    # subset the dataframe
+    awf_train <- merge(master.df, dfind, by=c("location", "year"))
+    awf_test <- merge(master.df, dfindt, by=c("location", "year"))
+      
+    combined_training_list[[f]] <- awf_train
+    combined_testing_list[[f]] <- awf_test
+  }
+  return(list(combined_training_list, combined_testing_list))
+}
+good_year <- function(master.df, dayln) {
+  # get table of sample years by location
+  yr_out=table(master.df$location, master.df$year)
+
+  # select sample years with more than X days (x=250)
+  full_year=list()
+  sind=vector()
+  cnt=0
+  ind=0
+  
+  for (i in seq_along(loc_seq)){
+   rm(ind)
+   if (ncol(yr_out)>=1) {
+     ind=which(yr_out[row.names(yr_out)==loc_seq[i],]>dayln)
+     
+     if (length(ind)>0) {
+       sind=c(sind,i)
+       cnt=cnt+1
+       full_year[[cnt]]=colnames(yr_out)[ind]
+     }
+   }
+  }
+  full_year=setNames(full_year,loc_seq[sind])
+  print(full_year)
+}
+```
+
+
+
+## Data importing and cleaning
+
+```{r data import}
+## Data import
+air <- read.csv("tributary air temperatures clean.csv", stringsAsFactors=F)
+water <- read.csv("tributary water temperature/water_temperature_d.csv",
+                  stringsAsFactors=F)
+flow <- read.csv("tributary discharge.csv", stringsAsFactors=F)
+
+# Convert to date format
+air$date <- as.Date(air$date, "%m/%d/%Y")
+water$date <- as.Date(water$date, "%m/%d/%Y")
+flow$date <- as.Date(flow$date, "%m/%d/%Y")
+
+
+## Calculate the MEAN airT for US locations
+for (i in which(is.na(air$mean_temp))) {
+  air$mean_temp <- (air$max_temp + air$min_temp) / 2
+}
+```
+
+### Data combining
+
+```{r data combine}
+## Combine water temperature and discharge
+aw <- merge(air, water, by = c("station_name","date"))
+awf <- merge(aw, flow, by = c("location","date"))
+awf <- awf %>% arrange(location, date)
+
+## Change into factor
+awf$location <- as.factor(awf$location)
+awf$station_name <- as.factor(awf$station_name)
+
+# Get location sequence
+loc_seq=levels(awf$location)
+
+
+## Check if there are any duplicates
+duplicates <- awf %>%
+  group_by(location, date) %>%
+  filter(n() > 1) # Duplicates should be NA...
+
+
+## Print the result
+table(awf$location)
+```
+
+### Check for imputed values
+
+Use a 7-days rolling mean to check for possibly imputed temperatures. If the variance of a certain day's temperature is very close to zero, then it is likely that this particular data is imputed.
+
+```{r impute check}
+# make sure that no initial NA values in awf water temperature
+which(is.na(awf$temp))
+
+# Need to calculate the rolling mean for each location separately...
+for(loc in loc_seq) {
+  sub <- awf[awf$location == loc,]
+  sub$rolling_mean <- rollmean(sub$temp, k = 7, fill = NA, align = "right")
+  awf[awf$location == loc, "rolling_mean"] <- sub$rolling_mean
+}
+
+# Calculate variance
+awf$variance <- (awf$temp - awf$rolling_mean)^2
+
+# Assign NA when variance is very small
+awf$temp[which(awf$variance < 1e-10)] <- NA
+
+# Check results - how many imputed values are in each location
+awf %>%
+  group_by(location) %>%
+  summarise(na_count = sum(is.na(temp)))
+
+```
+
+
+### Get lagged days
+
+```{r lagged days}
+## Get the time lag day variables
+awf <- awf %>%
+  group_by(location) %>%
+  mutate(dmean_1 = lag(mean_temp, 1),
+         dmean_2 = lag(mean_temp, 2),
+         dmean_3 = lag(mean_temp, 3),
+         dmean_4 = lag(mean_temp, 4),
+         dmean_5 = lag(mean_temp, 5),
+         dflow_1 = lag(flow, 1))
+
+
+## Get cumulative air temp for past five days
+awf <- awf %>% 
+  rowwise() %>% 
+  mutate(cair = (mean_temp+dmean_1+dmean_2+dmean_3+dmean_4+dmean_5)/6)
+
+## Get relative flow
+awf <- awf %>% mutate(rqc = (flow - dflow_1)/flow)
+```
+
+
+### Get final master temp dataframe
+
+```{r master temp}
+master.temp <- awf[complete.cases(cbind(awf$mean_temp,awf$temp)),] %>% 
+  select(location, date, station_name, country,
+         year, month = month.x, day = day.x,
+         water = temp, air = mean_temp, dmean_1, dmean_2, dmean_3,
+         dmean_4, dmean_5, flow, dflow_1, rqc, cair)
+
+master.temp <- master.temp[complete.cases(master.temp[,8:18]),]
+```
+
+
+
+## Get training and testing
+
+
+### Subsetting seasonal scales
+
+Now we want to subset three master dataframes that contains seasonal-scale data. We categorize the data into four different seasonal categories:
+
+1. spring: 3,4,5
+2. summer: 6,7,8
+3. fall: 9,10,11
+4. winter: 12,1,2
+
+```{r subset season}
+master.sum <- master.temp %>% 
+  filter(month == 6 | month == 7 | month == 8)
+
+master.win <- master.temp %>% 
+  filter(month == 12 | month == 1 | month == 2)
+
+master.spring <- master.temp %>% 
+  filter(month == 3 | month == 4 | month == 5)
+
+master.fall <- master.temp %>% 
+  filter(month == 9 | month == 10 | month == 11)
+
+master.annual <- master.temp %>% 
+  filter(month != 12 & month != 1 & month != 2)
+```
+
+
+### Identify good year/month data
+
+We want the seasonal data to be greater than 60 days, annual data (winter removed) more than 180 days.
+
+```{r good years, echo=FALSE}
+## Annual (250 days)
+fulyear <- good_year(master.annual, 180)
+
+
+## Seasonal (60 days)
+fulspring <- good_year(master.spring, 60)
+fulsum <- good_year(master.sum, 60)
+fulfall <- good_year(master.fall, 60)
+fulwin <- good_year(master.win, 60)
+```
+
+
+### Get training and testing
+
+Similarly, get training and testing for the specific season.
+
+```{r get training and testing}
+fold = 10
+
+## Get training and testing for annual
+annual <- get.traintest(master.annual, fulyear, 10)
+
+combined_training_list <- annual[[1]]
+combined_testing_list <- annual[[2]]
+
+
+## Get training and testing for each season
+sum <- get.traintest(master.sum, fulsum, 10)
+win <- get.traintest(master.win, fulwin, 10)
+spr <- get.traintest(master.spring, fulspring, 10)
+fall <- get.traintest(master.fall, fulfall, 10)
+
+combined_training_list_sp <- spr[[1]]
+combined_testing_list_sp <- spr[[2]]
+
+combined_training_list_su <- sum[[1]]
+combined_testing_list_su <- sum[[2]]
+
+combined_training_list_fa <- fall[[1]]
+combined_testing_list_fa <- fall[[2]]
+
+combined_training_list_w <- win[[1]]
+combined_testing_list_w <- win[[2]]
+
+
+## Create a list to store all the combined training and testing lists
+grand_training <- list(combined_training_list_sp, combined_training_list_su,
+                       combined_training_list_fa, combined_training_list_w,
+                       combined_training_list)
+
+grand_testing <- list(combined_testing_list_sp, combined_testing_list_su,
+                       combined_testing_list_fa, combined_testing_list_w,
+                       combined_testing_list)
+```
+
+
+## GLOBAL: futureStream database
+
+We import weekly modelled water temperature data from the 14 tributary locations.
+
+```{r futureStream data import}
+## Import all 14 files
+bigcreek <-read.csv("weekly modeled water temperature_new/bigcreek_model.csv") %>%
+  mutate(X = "bigcreek")
+bigotter <- read.csv("weekly modeled water temperature_new/bigotter_model.csv") %>%
+  mutate(X = "bigotter")
+fox <- read.csv("weekly modeled water temperature_new/fox_model.csv") %>% 
+  mutate(X = "fox")
+genesee <- read.csv("weekly modeled water temperature_new/genesee_model.csv") %>% 
+  mutate(X = "genesee")
+humber <- read.csv("weekly modeled water temperature_new/humber_model.csv") %>% 
+  mutate(X = "humber")
+longpoint <- read.csv("weekly modeled water temperature_new/lp_model.csv") %>% 
+  mutate(X = "longpoint")
+mississagi <- read.csv("weekly modeled water temperature_new/mississagi_model.csv") %>% 
+  mutate(X = "mississagi")
+nipigon <- read.csv("weekly modeled water temperature_new/nipigon_model.csv") %>%
+  mutate(X = "nipigon")
+portage <- read.csv("weekly modeled water temperature_new/pb_model.csv") %>% 
+  mutate(X = "portage")
+portdover <- read.csv("weekly modeled water temperature_new/portdover_model.csv") %>% 
+  mutate(X = "portdover")
+saginaw <- read.csv("weekly modeled water temperature_new/saginaw_model.csv") %>%
+  mutate(X = "saginaw")
+still <- read.csv("weekly modeled water temperature_new/still_model.csv") %>%
+  mutate(X = "still")
+stlouis <- read.csv("weekly modeled water temperature_new/st_louis_model.csv") %>%
+  mutate(X = "stlouis")
+vermilion <- read.csv("weekly modeled water temperature_new/vermilion_model.csv") %>%
+  mutate(X = "vermilion")
+
+# Combine into one dataframe
+futurestream.temp <- rbind(bigcreek,bigotter,fox,genesee,humber,longpoint,
+                           mississagi,nipigon,portage,portdover,saginaw,
+                           still,stlouis,vermilion) %>% 
+  rename(location = X, week = weeks, preds.futureS = temperature.avg) %>% 
+  arrange(location)
+```
+
+
+## REGIONAL: non-linear model with 5 day average temperature
+
+### Fit non-linear model
+```{r non-linear, eval=TRUE}
+## starting parameters
+coef.spring <- c(alpha=30, gamma=0.05,beta=10)
+coef.summer <- c(alpha=25, gamma=0.05,beta=10)
+coef.fall <- c(alpha=30, gamma=0.05,beta=10)
+coef.annual <- c(alpha=20, gamma=0.05,beta=9)
+
+coef.list <- list(coef.spring, coef.summer, coef.fall, NA, coef.annual)
+
+
+spring.r <- vector("list", fold)
+summer.r <- vector("list", fold)
+fall.r <- vector("list", fold)
+winter.r <- vector("list", fold)
+annual.r <- vector("list", fold)
+
+grand.nonlinear <- list(spring.r, summer.r, fall.r, winter.r, annual.r)
+
+
+## Iteration starts here
+for (season in c(1,2,3,5)) {
+  
+  ## Get current season and its correspnding training/testing
+  train <- grand_training[[season]]
+  test <- grand_testing[[season]]
+  
+  ## 10 fold iteration starts here
+  for (i in 1:fold){
+  
+    compare <- NA
+    # select current dataset, and all unique location levels
+    current.training <- train[[i]]
+    current.testing <- test[[i]]
+    compare <- current.testing
+
+    # model training and predicting
+    model <- nlme(water ~ alpha / (1 + exp(gamma * (beta - cair))),
+                  fixed = list(alpha~1,gamma~1,beta~1),
+                  random = gamma ~ 1|location,
+                  start = coef.list[[season]],
+                  data = current.training, na.action = na.omit,
+                  control = list(msMaxIter = 200))
+    
+    compare$preds.ar <- as.vector(predict(
+      model, newdata = current.testing, re.form = ~1|location))
+  
+    grand.nonlinear[[season]][[i]] <- compare
+  }
+}
+```
+
+
+### Convert into weekly output
+
+```{r convert to weekly}
+# new dataframe to store all weekly results
+grand.week = grand.nonlinear
+
+for (season in c(1,2,3,5)) {
+  
+  for(i in 1:fold) {
+    ## Convert lag5 model prediction to weekly timescale
+    df.days <- grand.nonlinear[[season]][[i]]
+    df.days$week <- week(df.days$date)
+    df.days$week[df.days$week == 53] <- 52 #need to convert week 53 to 52
+  
+    df.week <- merge(
+      aggregate(preds.ar~week+location,FUN=mean,data=df.days,na.action=na.omit),
+      aggregate(water~week+location,FUN=mean,data=df.days,na.action=na.omit),
+      all=TRUE) %>% 
+      na.omit() %>% 
+      arrange(location, week)
+  
+    comp.week <- merge(df.week, futurestream.temp, by=c("location","week")) %>% 
+      arrange(location, week)
+  
+    # store it back into the grand.nonlinear list
+    grand.week[[season]][[i]] <- comp.week
+  }
+}
+```
+
+
+## Compare between GLOBAL and REGIONAL
+
+### Calculate RMSE for each seasonal scale
+```{r rmse}
+# new function - different from other files...
+cal.rmse <- function(out.list, fold, switch) {
+  
+  # data frame to store the results
+  r <- matrix(NA, nrow=fold, ncol=length(unique(out.list[[1]]$location)))
+  colnames(r) <- unique(out.list[[1]]$location)
+  
+  # 10 iterations
+  for (i in 1:fold){
+   compare <- out.list[[i]]
+    
+   # calculate rmse
+   for (loc in unique(compare$location)) {
+     compare.now <- subset(compare, location == loc) %>% na.omit()
+     
+     if (switch=="r"){
+       r[i,loc] <-
+         round(sqrt(mean((compare.now$water-compare.now$preds.ar)^2)),2)
+     } else if (switch=="g"){
+       r[i,loc] <-
+         round(sqrt(mean((compare.now$water-compare.now$preds.futureS)^2)),2)
+     }
+    }
+  }
+  return(r)
+}
+
+
+## Annual
+annual.compare <- data.frame(
+  regional = colMeans(cal.rmse(grand.week[[5]], fold, "r"), na.rm=T),
+  global = colMeans(cal.rmse(grand.week[[5]], fold, "g"), na.rm=T))
+
+colMeans(annual.compare)
+knitr::kable(annual.compare, digits = 3)
+
+
+## Spring
+spring.compare <- data.frame(
+  regional = colMeans(cal.rmse(grand.week[[1]], fold, "r"), na.rm=T),
+  global = colMeans(cal.rmse(grand.week[[1]], fold, "g"), na.rm=T))
+
+colMeans(spring.compare)
+knitr::kable(spring.compare, digits = 3)
+
+
+## Summer
+summer.compare <- data.frame(
+  regional = colMeans(cal.rmse(grand.week[[2]], fold, "r"), na.rm=T),
+  global = colMeans(cal.rmse(grand.week[[2]], fold, "g"), na.rm=T))
+
+colMeans(summer.compare)
+knitr::kable(summer.compare, digits = 3)
+
+
+## Fall
+fall.compare <- data.frame(
+  regional = colMeans(cal.rmse(grand.week[[3]], fold, "r"), na.rm=T),
+  global = colMeans(cal.rmse(grand.week[[3]], fold, "g"), na.rm=T))
+
+colMeans(fall.compare)
+knitr::kable(fall.compare, digits = 3)
+```
+
+
+### Calculate NSC for each seasonal scale
+```{r nsc}
+# new function - different from other files...
+cal.nsc <- function(out.list, fold, switch) {
+  
+  # data frame to store the results
+  r <- matrix(NA, nrow=fold, ncol=length(unique(out.list[[1]]$location)))
+  colnames(r) <- unique(out.list[[1]]$location)
+  
+  # 10 iterations
+  for (i in 1:fold){
+   compare <- out.list[[i]]
+    
+   # calculate rmse
+   for (loc in unique(compare$location)) {
+     compare.now <- subset(compare, location == loc) %>% na.omit()
+     
+     if (switch=="r"){
+       r[i,loc] <-
+         1 - sum((compare.now$water - compare.now$preds.ar)^2) / sum((compare.now$water - mean(compare.now$water))^2)
+     } else if (switch=="g"){
+       r[i,loc] <-
+         1 - sum((compare.now$water - compare.now$preds.futureS)^2) / sum((compare.now$water - mean(compare.now$water))^2)
+     }
+    }
+  }
+  return(r)
+}
+
+
+## Annual
+annual.compare <- data.frame(
+  regional = colMeans(cal.nsc(grand.week[[5]], fold, "r"), na.rm=T),
+  global = colMeans(cal.nsc(grand.week[[5]], fold, "g"), na.rm=T))
+
+colMeans(annual.compare)
+knitr::kable(annual.compare, digits = 3)
+
+
+## Spring
+spring.compare <- data.frame(
+  regional = colMeans(cal.nsc(grand.week[[1]], fold, "r"), na.rm=T),
+  global = colMeans(cal.nsc(grand.week[[1]], fold, "g"), na.rm=T))
+
+colMeans(spring.compare)
+knitr::kable(spring.compare, digits = 3)
+
+
+## Summer
+summer.compare <- data.frame(
+  regional = colMeans(cal.nsc(grand.week[[2]], fold, "r"), na.rm=T),
+  global = colMeans(cal.nsc(grand.week[[2]], fold, "g"), na.rm=T))
+
+colMeans(summer.compare)
+knitr::kable(summer.compare, digits = 3)
+
+
+## Fall
+fall.compare <- data.frame(
+  regional = colMeans(cal.nsc(grand.week[[3]], fold, "r"), na.rm=T),
+  global = colMeans(cal.nsc(grand.week[[3]], fold, "g"), na.rm=T))
+
+colMeans(fall.compare)
+knitr::kable(fall.compare, digits = 3)
+```
