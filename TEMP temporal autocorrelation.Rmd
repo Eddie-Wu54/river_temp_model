@@ -259,7 +259,7 @@ Get training and testing for the specific season, and for annual. We store them 
 fold = 10
 
 ## Get training and testing for annual
-annual <- get.traintest(master.temp, fulyear, 10)
+annual <- get.traintest(master.annual, fulyear, 10)
 
 combined_training_list <- annual[[1]]
 combined_testing_list <- annual[[2]]
@@ -342,6 +342,7 @@ lag2.plot(master.spring$air, master.spring$water, 5)
 lag2.plot(master.sum$air, master.sum$water, 5)
 lag2.plot(master.fall$air, master.fall$water, 5)
 lag2.plot(master.win$air, master.win$water, 5)
+lag2.plot(master.annual$air, master.annual$water, 5)
 ```
 
 
@@ -458,8 +459,8 @@ compare$preds.ar <- as.vector(predict(model.ar, newdata = current.testing, re.fo
 
 
 ## Plot ACF
-ggarrange(plot(ACF(model,resType="normalized"),alpha=0.05),
-        plot(ACF(model.ar,resType="normalized"),alpha=0.05),
+ggarrange(plot(ACF(model,resType="n"),alpha=0.05),
+        plot(ACF(model.ar,resType="n"),alpha=0.05),
         nrow = 1)
 
 
@@ -484,6 +485,9 @@ for (loc in loc_seq) {
 #ModelMetrics::rmse(compare$preds.ar, compare$obs)
 
 anova(model, model.ar)
+
+dw_test_nlme <- dwtest(resid(model.ar)~ 1)
+print(dw_test_nlme)
 ```
 
 1. Temporal autocorrelation: The autocorrelation in summer and winter is reduced to a decent amount. In spring and fall, it has some degree of autocorrelation at day 6-10, but low at day 5.
@@ -607,6 +611,9 @@ for (loc in loc_seq) {
 #ModelMetrics::rmse(compare$preds.ar, compare$obs)
 
 anova(residual.comp, residual.comp.ar)
+
+dw_test_nlme <- dwtest(resid(residual.comp)~ 1)
+print(dw_test_nlme)
 ```
 
 1. Temporal autocorrelation: Set phi=0.85 largely reduced temporal autocorrelation to an acceptable level for all seasons.
@@ -677,3 +684,75 @@ anova(model, model.ar)
 1. Overall, including a temporal autocorrelation AR1 correction at phi=0.85 at seasonal scale yields relatively good prediction and low ACF.
 
 2. At annual scale (winter removed), we are unable to obtain a good predictive model while fully reducing temporal autocorrelation under significant level. Yet, it is sensible to use one (still set phi=0.85) solely for the purpose of prediction.
+
+
+#### Non-linear regression
+```{r nonlinear}
+current.training <- current.training %>% 
+  rowwise() %>% 
+  mutate(cair = mean(c_across(9:14)),
+         ldair = (6/16*air+5/16*dmean_1+4/16*dmean_2+
+                  3/16*dmean_3+2/16*dmean_4+1/16*dmean_5))
+
+current.testing <- current.testing %>% 
+  rowwise() %>% 
+  mutate(cair = mean(c_across(9:14)),
+         ldair = (6/16*air+5/16*dmean_1+4/16*dmean_2+
+                  3/16*dmean_3+2/16*dmean_4+1/16*dmean_5))
+
+compare <- current.testing
+
+# make sure to change summer coefficient when fitting models on seasons
+#coef.summer <- c(alpha=25, gamma=7,beta=10)
+#coef.spring <- c(alpha=20, gamma=5,beta=9)
+
+
+# model training and predicting
+model <- nlme(water ~ alpha / (1 + exp(gamma * (beta - air))),
+              fixed = list(alpha~1,gamma~1,beta~1),
+              random = gamma ~ 1|location,
+              start = c(alpha=26,gamma=7,beta=10),
+              data = current.training, na.action = na.omit,
+              control = list(msMaxIter = 200))
+
+compare$preds <- as.vector(predict(model, newdata = current.testing))
+
+# new model with new air temp
+model.new <- nlme(water ~ alpha / (1 + exp(gamma * (beta - cair))),
+              fixed = list(alpha~1,gamma~1,beta~1),
+              random = gamma ~ 1|location,
+              start = c(alpha=26,gamma=7,beta=10),
+              data = current.training, na.action = na.omit,
+              control = list(msMaxIter = 200))
+
+compare$preds.new <- as.vector(predict(model.new, newdata = current.testing))
+
+
+## Plot ACF
+plot(ACF(model.new,resType="normalized"),alpha=0.05)
+
+
+## Plots
+for (loc in loc_seq) {
+  plot.df <- compare[compare$location == loc,]
+  diff <- round(sqrt(mean((plot.df$preds-plot.df$water)^2)),2)
+  diff.new <- round(sqrt(mean((plot.df$preds.new-plot.df$water)^2)),2)
+
+  pl <- ggplot(data=plot.df, aes(x=date))+
+          geom_line(aes(x=date, y=water), color = "black")+
+          geom_line(aes(x=date, y=preds), color = "red")+
+          geom_line(aes(x=date, y=preds.new), color = "blue")+
+          ggtitle(paste(
+            loc, ": ", plot.df$year, " (RMSE:", diff, "&", diff.new, ")"))
+  print(pl)
+}
+
+check_model(model)
+
+## Metrics calculation
+#ModelMetrics::rmse(compare$preds, compare$obs)
+#ModelMetrics::rmse(compare$preds.ar, compare$obs)
+
+dw_test_nlme <- dwtest(resid(model.new)~ 1)
+print(dw_test_nlme)
+```
