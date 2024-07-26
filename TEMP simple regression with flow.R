@@ -3,7 +3,7 @@
 #' 
 #' 1. Simple lag5 + flow
 #' 2. Simple lag5 + relative flow (for previous day)
-#' 3. Simple lag5 + flow lag5
+#' 3. Simple lag5 + flow lag3
 #' 
 #' All three models are compared to the simple lag5 multiple linear regression
 #' model without flow to see if including flow would improve model performance...
@@ -18,379 +18,344 @@
   library(nlme)
   library(xts)
   library(ModelMetrics)
+  library(lmerTest)
   library(zoo)
   library(lubridate)
-}
-
-
-## Functions
-cal.rmse <- function(out.list, fold) {
-  
-  # data frame to store the results
-  r <- matrix(NA, nrow=fold, ncol=length(unique(out.list[[1]]$location)))
-  colnames(r) <- unique(out.list[[1]]$location)
-  
-  # 10 iterations
-  for (i in 1:fold){
-    compare <- out.list[[i]]
-    
-    # calculate rmse
-    for (loc in unique(compare$location)) {
-      compare.now <- subset(compare, location == loc) %>% na.omit()
-      r[i,loc] <- rmse(compare.now$obs, compare.now$preds)
-    }
-  }
-  return(r)
-}
-cal.nsc <- function(out.list, fold) {
-  
-  # dataframe to store the results
-  r <- matrix(NA, nrow=fold, ncol=length(unique(out.list[[1]]$location)))
-  colnames(r) <- unique(out.list[[1]]$location)
-  
-  # 10 iterations
-  for (i in 1:fold){
-    compare <- out.list[[i]]
-    
-    # calculate nsc
-    for (loc in unique(compare$location)) {
-      compare.now <- subset(compare, location == loc) %>% na.omit()
-      nsc <- 1 - sum((compare.now$obs - compare.now$preds)^2) / sum((compare.now$obs - mean(compare.now$obs))^2)
-      r[i,loc] <- nsc
-    }
-  }
-  return(r)
+  library(plotrix) #for zooming in plots
 }
 
 
 
+#### Data importing and cleaning ####
 
-#### Data import and cleaning ####
-
-### Data import
-airtemp <- read.csv("tributary air temperatures clean.csv")
-watertemp <- read.csv("tributary water temperature/water_temperature_d.csv")
-flow <- read.csv("tributary discharge.csv")
+## Data import
+air <- read.csv("tributary air temperatures clean.csv", stringsAsFactors=F)
+water <- read.csv("tributary water temperature/water_temperature_d.csv",
+                  stringsAsFactors=F)
+flow <- read.csv("tributary discharge.csv", stringsAsFactors=F)
+avg15 <- read.csv("15-year average river discharge.csv", stringsAsFactors=F)
 
 # Convert to date format
-airtemp$date <- as.Date(airtemp$date, format = "%m/%d/%Y")
-watertemp$date <- as.Date(watertemp$date, format = "%m/%d/%Y")
-flow$date <- as.Date(flow$date, format = "%m/%d/%Y")
-
-
-table(airtemp$station_name)
-table(watertemp$station_name)
-table(watertemp$location)
-table(flow$location)
+air$date <- as.Date(air$date, "%m/%d/%Y")
+water$date <- as.Date(water$date, "%m/%d/%Y")
+flow$date <- as.Date(flow$date, "%m/%d/%Y")
 
 
 ## Calculate the MEAN airT for US locations
-for (i in which(is.na(airtemp$mean_temp))) {
-  airtemp$mean_temp <- (airtemp$max_temp + airtemp$min_temp) / 2
+for (i in which(is.na(air$mean_temp))) {
+  air$mean_temp <- (air$max_temp + air$min_temp) / 2
 }
 
 
-### Check imputed values
-# make sure that no initial NA values in watertemp
-which(is.na(watertemp$location))
+## Combine water temperature and discharge
+fl <- merge(flow, avg15, by = "location")
+aw <- merge(air, water, by = c("station_name","date"))
+awf <- merge(aw, fl, by = c("location","date"))
+awf <- awf %>% arrange(location, date)
+
+## Change into factor
+awf$location <- as.factor(awf$location)
+awf$station_name <- as.factor(awf$station_name)
+
+# Get location sequence
+loc_seq=levels(awf$location)
+
+
+## Check if there are any duplicates
+duplicates <- awf %>%
+  group_by(location, date) %>%
+  filter(n() > 1) # Duplicates should be NA...
+
+
+## Print the result
+table(awf$location)
+
+
+# make sure that no initial NA values in awf water temperature
+which(is.na(awf$temp))
 
 # Need to calculate the rolling mean for each location separately...
-watertemp$location <- as.factor(watertemp$location)
-unique_locations <- unique(watertemp$location)
-
-for(loc in unique_locations) {
-  sub <- watertemp[watertemp$location == loc,]
+for(loc in loc_seq) {
+  sub <- awf[awf$location == loc,]
   sub$rolling_mean <- rollmean(sub$temp, k = 7, fill = NA, align = "right")
-  watertemp[watertemp$location == loc, "rolling_mean"] <- sub$rolling_mean
+  awf[awf$location == loc, "rolling_mean"] <- sub$rolling_mean
 }
 
 # Calculate variance
-watertemp$variance <- (watertemp$temp - watertemp$rolling_mean)^2
+awf$variance <- (awf$temp - awf$rolling_mean)^2
+
 # Assign NA when variance is very small
-watertemp$temp[which(watertemp$variance < 1e-10)] <- NA
+awf$temp[which(awf$variance < 1e-10)] <- NA
 
-
-### Combine into one master dataframe
-water <- left_join(watertemp, flow, by = c("location","date"))
-master.temp <- left_join(airtemp, water, by = c("station_name", "date")) %>% 
-  select(location, country, station_name, date, year, month = month.x,
-         day = day.x, airT = mean_temp, waterT = temp, flow) %>% 
-  na.omit() %>% 
-  arrange(location, date) # arrange by location and date
-
-
-
-### Get the time lag air temperature and flow
-master.temp <- master.temp %>%
+# Check results - how many imputed values are in each location
+awf %>%
   group_by(location) %>%
-  mutate(airT.lag1 = lag(airT, 1),
-         airT.lag2 = lag(airT, 2),
-         airT.lag3 = lag(airT, 3),
-         airT.lag4 = lag(airT, 4),
-         airT.lag5 = lag(airT, 5)) %>% 
-  na.omit()
-
-master.temp <- master.temp %>% 
-  group_by(location) %>% 
-  mutate(flow.lag1 = lag(flow, 1),
-         flow.lag2 = lag(flow, 2),
-         flow.lag3 = lag(flow, 3),
-         flow.lag4 = lag(flow, 4),
-         flow.lag5 = lag(flow, 5)) %>% 
-  na.omit()
-
-
-### Get relative flow and cumulative flow
-master.temp <- master.temp %>% 
-  mutate(rqc = (flow - flow.lag1)/flow)
-
-master.temp <- master.temp %>% 
-  mutate(cumflow = flow.lag1 + flow.lag2 + flow.lag3)
-
-
-# Change the location into factors
-master.temp$country <- as.factor(master.temp$country)
-master.temp$location <- as.factor(master.temp$location)
-table(master.temp$location)
+  summarise(na_count = sum(is.na(temp)))
 
 
 
 
-#### Get training and testing data ####
+#### Calculate different flow-related metrics
 
-## Subsetting
-df_by_location <- split(master.temp, master.temp$location)
-df_by_location <- df_by_location[sapply(df_by_location, function(x) !is.null(x) && nrow(x) > 0)]
+## Get the time lag day variables
+awf <- awf %>%
+  group_by(location) %>%
+  mutate(dmean_1 = lag(mean_temp, 1),
+         dmean_2 = lag(mean_temp, 2),
+         dmean_3 = lag(mean_temp, 3),
+         dmean_4 = lag(mean_temp, 4),
+         dmean_5 = lag(mean_temp, 5),
+         dflow_1 = lag(flow, 1),
+         dflow_2 = lag(flow, 2),
+         dflow_3 = lag(flow, 3),
+         dflow_4 = lag(flow, 4),
+         dflow_5 = lag(flow, 5))
 
-fold = 10 #run 10 folds
-combined_training_list <- vector("list",fold)
-combined_testing_list <- vector("list",fold)
 
-## Loop
-for (f in 1:fold) {
+## Get relative flow, cumulative and inverse flow
+awf <- awf %>% 
+  mutate(rqc = (flow - dflow_1)/flow)
+
+awf <- awf %>% 
+  mutate(cumflow = dflow_1 + dflow_2 + dflow_3)
+
+awf <- awf %>% 
+  mutate(inv = 1/flow)
+
+
+## Get cumulative air temp for past five days
+awf <- awf %>% 
+  rowwise() %>% 
+  mutate(cair = (mean_temp+dmean_1+dmean_2+dmean_3+dmean_4+dmean_5)/6)
+
+
+
+## Get final master dataset
+master.temp <- awf[complete.cases(cbind(awf$mean_temp,awf$temp)),] %>% 
+  select(location, date, station_name, country,
+         year, month = month.x, day = day.x,
+         water = temp, air = mean_temp, dmean_1, dmean_2, dmean_3,
+         dmean_4, dmean_5, flow, dflow_1, dflow_2, dflow_3, dflow_4,
+         dflow_5, rqc, inv, cumflow, X15.year.average, cair)
+
+master.temp <- master.temp[complete.cases(master.temp[,8:25]),]
+
+
+#### Get training and testing ####
+
+#' This step is the same as the other .Rmd file. Please run it from the
+#' other scripts to get the training and testing data.
+
+
+
+## Create a list to store all the models (for AIC comparison later)
+model.list <- vector("list", 5)
+
+
+#### Run 7 different models with different flow input ####
+## Model forms
+formnull <- water ~ air + dmean_1 + dmean_2 + dmean_3 + dmean_4 + dmean_5
+form1 <- water ~ air + dmean_1 + dmean_2 + dmean_3 + dmean_4 + dmean_5 + flow
+form2 <- water ~ air + dmean_1 + dmean_2 + dmean_3 + dmean_4 + dmean_5 + inv
+form3 <- water ~ air + dmean_1 + dmean_2 + dmean_3 + dmean_4 + dmean_5 + rqc
+form4 <- water ~ air + dmean_1 + dmean_2 + dmean_3 + dmean_4 + dmean_5 + cumflow
+form5 <- water ~ air + dmean_1 + dmean_2 + dmean_3 + dmean_4 + dmean_5 + dflow_1 + dflow_2 + dflow_3
+form6 <- water ~ air + dmean_1 + dmean_2 + dmean_3 + dmean_4 + dmean_5 + X15.year.average
+
+
+## Create list to store output preds
+spring.r <- vector("list", fold)
+summer.r <- vector("list", fold)
+fall.r <- vector("list", fold)
+winter.r <- vector("list", fold)
+annual.r <- vector("list", fold)
+
+grand.lag5 <- list(spring.r, summer.r, fall.r, winter.r, annual.r)
+grand.flow <- list(spring.r, summer.r, fall.r, winter.r, annual.r)
+grand.inv <- list(spring.r, summer.r, fall.r, winter.r, annual.r)
+grand.rqc <- list(spring.r, summer.r, fall.r, winter.r, annual.r)
+grand.cum <- list(spring.r, summer.r, fall.r, winter.r, annual.r)
+grand.flowlag3 <- list(spring.r, summer.r, fall.r, winter.r, annual.r)
+grand.15year <- list(spring.r, summer.r, fall.r, winter.r, annual.r)
+
+
+## Model iteration starts here
+#' Two loops: outer loop for season, inner loop for 10 replicates
+for (season in 1:5) {
   
-  for (loc in 1:length(df_by_location)) {
+  ## Get current season and its correspnding training/testing
+  train <- grand_training[[season]]
+  test <- grand_testing[[season]]
+  
+  ## 10 fold iteration starts here
+  for (i in 1:fold){
     
-    # Subset the current location data, and get train/test
-    current <- df_by_location[[loc]]
-    current_training <- current[current$year == sample(current$year, 1),]
-    current_testing <- current[current$year == sample(current$year, 1),]
+    compare <- NA
+    # select current dataset, and all unique location levels
+    current.training <- train[[i]]
+    current.testing <- test[[i]]
     
-    # Add to the combined list
-    combined_training_list[[f]] <- rbind(
-      combined_training_list[[f]], current_training)
-    combined_testing_list[[f]] <- rbind(
-      combined_testing_list[[f]], current_testing)
+    # model training
+    model.null <- lme(fixed = formnull, random = ~1 | location,
+                     correlation=corAR1(form=~1|location, value = 0.85, fixed=T),
+                     na.action = na.omit, data = current.training)
+    model.flow <- lme(fixed = form1, random = ~1 | location,
+                      correlation=corAR1(form=~1|location, value = 0.85, fixed=T),
+                      na.action = na.omit, data = current.training)
+    model.inv <- lme(fixed = form2, random = ~1 | location,
+                      correlation=corAR1(form=~1|location, value = 0.85, fixed=T),
+                      na.action = na.omit, data = current.training)
+    model.rqc <- lme(fixed = form3, random = ~1 | location,
+                      correlation=corAR1(form=~1|location, value = 0.8, fixed=T),
+                      na.action = na.omit, data = current.training)
+    model.cum <- lme(fixed = form4, random = ~1 | location,
+                      correlation=corAR1(form=~1|location, value = 0.8, fixed=T),
+                      na.action = na.omit, data = current.training)
+    model.flowlag3 <- lme(fixed = form5, random = ~1 | location,
+                      correlation=corAR1(form=~1|location, value = 0.8, fixed=T),
+                      na.action = na.omit, data = current.training)
+    model.15year <- lme(fixed = form6, random = ~1 | location,
+                      correlation=corAR1(form=~1|location, value = 0.8, fixed=T),
+                      na.action = na.omit, data = current.training)
+    
+    # model predictions
+    preds.null <- as.data.frame(predict(model.null, newdata = current.testing, re.form=~(1|location)))
+    preds.flow <- as.data.frame(predict(model.flow, newdata = current.testing, re.form=~(1|location)))
+    preds.inv <- as.data.frame(predict(model.inv, newdata = current.testing, re.form=~(1|location)))
+    preds.rqc <- as.data.frame(predict(model.rqc, newdata = current.testing, re.form=~(1|location)))
+    preds.cum <- as.data.frame(predict(model.cum, newdata = current.testing, re.form=~(1|location)))
+    preds.flowlag3 <- as.data.frame(predict(model.flowlag3, newdata = current.testing, re.form=~(1|location)))
+    preds.15year <- as.data.frame(predict(model.15year, newdata = current.testing, re.form=~(1|location)))
+    
+    # combine into a dataframe
+    grand.lag5[[season]][[i]] <- cbind(current.testing, preds = preds.null[,1]) %>% 
+      select(location, date, obs = water, preds)
+    grand.flow[[season]][[i]] <- cbind(current.testing, preds = preds.flow[,1]) %>% 
+      select(location, date, obs = water, preds)
+    grand.inv[[season]][[i]] <- cbind(current.testing, preds = preds.inv[,1]) %>% 
+      select(location, date, obs = water, preds)
+    grand.rqc[[season]][[i]] <- cbind(current.testing, preds = preds.rqc[,1]) %>% 
+      select(location, date, obs = water, preds)
+    grand.cum[[season]][[i]] <- cbind(current.testing, preds = preds.cum[,1]) %>% 
+      select(location, date, obs = water, preds)
+    grand.flowlag3[[season]][[i]] <- cbind(current.testing, preds = preds.flowlag3[,1]) %>% 
+      select(location, date, obs = water, preds)
+    grand.15year[[season]][[i]] <- cbind(current.testing, preds = preds.15year[,1]) %>% 
+      select(location, date, obs = water, preds)
   }
   
-  combined_training_list[[f]]$year <- as.factor(combined_training_list[[f]]$year)
-  combined_testing_list[[f]]$year <- as.factor(combined_testing_list[[f]]$year)
+  # store models in a model dataframe
+  model.list[[season]][["lag5"]] <- model.null
+  model.list[[season]][["flow"]] <- model.flow
+  model.list[[season]][["inv"]] <- model.inv
+  model.list[[season]][["rqc"]] <- model.rqc
+  model.list[[season]][["cum"]] <- model.cum
+  model.list[[season]][["flowlag3"]] <- model.flowlag3
+  model.list[[season]][["15year"]] <- model.15year
 }
 
 
 
 
-#### Simple lag5 linear ####
-## Forms
-form1 <- waterT ~ airT.lag1 + airT.lag2 + airT.lag3 + airT.lag4 + airT.lag5 + (1|location)
-results.lag5 <- vector("list", fold)
 
+#### Compare model AIC separately (for each season) ####
+aic.results <- vector("list", 5)
 
-## Iteration starts here
-for (i in 1:fold){
-  
-  compare <- NA
-  # select current dataset, and all unique location levels
-  current.training <- combined_training_list[[i]]
-  current.testing <- combined_testing_list[[i]]
-  loc.levels <- unique(current.training$location)
-  
-  # model training and predicting
-  model <- lmer(form1, data = current.training)
-  preds <- predict(model, newdata = current.testing, re.form=(~1|location))
-  
-  p <- as.data.frame(preds)
-  
-  # calculate RMSE
-  compare <- cbind(current.testing, preds = p$preds) %>% 
-    select(location, date, obs = waterT, preds)
-  
-  results.lag5[[i]] <- compare
+for (season in 1:5){
+  aic.results[[season]] <- anova(model.list[[season]][["lag5"]],
+                                 model.list[[season]][["flow"]],
+                                 model.list[[season]][["inv"]],
+                                 model.list[[season]][["rqc"]],
+                                 model.list[[season]][["cum"]],
+                                 model.list[[season]][["flowlag3"]],
+                                 model.list[[season]][["15year"]])
+  print(aic.results[[season]])
+  }
+
+# In general, the model with inverse flow has the lowest AIC,let's check the model summary
+for (season in 1:5) {
+  print(summary(model.list[[season]][["inv"]]))
 }
 
 
-## Get the results
-rmse.lag5 <- cal.rmse(results.lag5, fold)
-colMeans(rmse.lag5)
 
-nsc.lag5 <- cal.nsc(results.lag5, fold)
-colMeans(nsc.lag5)
+#### Check model preformance (RMSE and NSC) ####
 
+## RMSE
+rmse.results <- vector("list", 5)
 
-
-
-#### Simple lag5 linear with flow ####
-## Forms
-form2 <- waterT ~ airT.lag1 + airT.lag2 + airT.lag3 + airT.lag4 + airT.lag5 + flow + (1|location)
-results.flow <- vector("list", fold)
-
-
-## Iteration starts here
-for (i in 1:fold){
-  
-  compare <- NA
-  # select current dataset, and all unique location levels
-  current.training <- combined_training_list[[i]]
-  current.testing <- combined_testing_list[[i]]
-  loc.levels <- unique(current.training$location)
-  
-  # model training and predicting
-  model <- lmer(form2, data = current.training)
-  preds <- predict(model, newdata = current.testing, re.form=(~1|location))
-  
-  p <- as.data.frame(preds)
-  
-  # calculate RMSE
-  compare <- cbind(current.testing, preds = p$preds) %>% 
-    select(location, date, obs = waterT, preds)
-  
-  results.flow[[i]] <- compare
+for (season in 1:5) {
+  rmse.results[[season]][[1]] <- colMeans(cal.rmse(grand.lag5[[season]],10))
+  rmse.results[[season]][[2]] <- colMeans(cal.rmse(grand.flow[[season]],10))
+  rmse.results[[season]][[3]] <- colMeans(cal.rmse(grand.inv[[season]],10))
+  rmse.results[[season]][[4]] <- colMeans(cal.rmse(grand.rqc[[season]],10))
+  rmse.results[[season]][[5]] <- colMeans(cal.rmse(grand.cum[[season]],10))
+  rmse.results[[season]][[6]] <- colMeans(cal.rmse(grand.flowlag3[[season]],10))
+  rmse.results[[season]][[7]] <- colMeans(cal.rmse(grand.15year[[season]],10))
 }
 
 
-## Get the results
-rmse.flow <- cal.rmse(results.flow, fold)
-colMeans(rmse.flow)
-
-nsc.flow <- cal.nsc(results.flow, fold)
-colMeans(nsc.flow)
-
-
-
-
-#### Simple lag5 linear with lag5 flow ####
-## Forms
-form3 <- waterT ~ airT.lag1 + airT.lag2 + airT.lag3 + airT.lag4 + airT.lag5 +
-  flow.lag1 + flow.lag2 + flow.lag3 + flow.lag4 + flow.lag5 + (1|location)
-results.5flow <- vector("list", fold)
-
-
-## Iteration starts here
-for (i in 1:fold){
-  
-  compare <- NA
-  # select current dataset, and all unique location levels
-  current.training <- combined_training_list[[i]]
-  current.testing <- combined_testing_list[[i]]
-  loc.levels <- unique(current.training$location)
-  
-  # model training and predicting
-  model <- lmer(form3, data = current.training)
-  preds <- predict(model, newdata = current.testing, re.form=(~1|location))
-  
-  p <- as.data.frame(preds)
-  
-  # calculate RMSE
-  compare <- cbind(current.testing, preds = p$preds) %>% 
-    select(location, date, obs = waterT, preds)
-  
-  results.5flow[[i]] <- compare
+# Overall RMSE for each model
+for (season in 1:5) {
+  c <- data.frame(lag5 = rmse.results[[season]][[1]],
+                  flow = rmse.results[[season]][[2]],
+                  inv = rmse.results[[season]][[3]],
+                  rqc = rmse.results[[season]][[4]],
+                  cum = rmse.results[[season]][[5]],
+                  flowlag3 = rmse.results[[season]][[6]],
+                  year15 = rmse.results[[season]][[7]])
+  print(colMeans(c))
 }
 
 
-## Get the results
-rmse.5flow <- cal.rmse(results.5flow, fold)
-colMeans(rmse.5flow)
 
-nsc.5flow <- cal.nsc(results.5flow, fold)
-colMeans(nsc.5flow)
+## NSC
+ncs.results <- vector("list", 5)
 
-
-
-#### Simple lag5 linear with relative flow ####
-## Forms
-form4 <- waterT ~ airT.lag1 + airT.lag2 + airT.lag3 + airT.lag4 + airT.lag5 +
-  cumflow + (1|location)
-results.rflow <- vector("list", fold)
-
-
-## Iteration starts here
-for (i in 1:fold){
-  
-  compare <- NA
-  # select current dataset, and all unique location levels
-  current.training <- combined_training_list[[i]]
-  current.testing <- combined_testing_list[[i]]
-  loc.levels <- unique(current.training$location)
-  
-  # model training and predicting
-  model <- lmer(form4, data = current.training)
-  preds <- predict(model, newdata = current.testing, re.form=(~1|location))
-  
-  p <- as.data.frame(preds)
-  
-  # calculate RMSE
-  compare <- cbind(current.testing, preds = p$preds) %>% 
-    select(location, date, obs = waterT, preds)
-  
-  results.rflow[[i]] <- compare
+for (season in 1:5) {
+  ncs.results[[season]][[1]] <- colMeans(cal.nsc(grand.lag5[[season]],10))
+  ncs.results[[season]][[2]] <- colMeans(cal.nsc(grand.flow[[season]],10))
+  ncs.results[[season]][[3]] <- colMeans(cal.nsc(grand.inv[[season]],10))
+  ncs.results[[season]][[4]] <- colMeans(cal.nsc(grand.rqc[[season]],10))
+  ncs.results[[season]][[5]] <- colMeans(cal.nsc(grand.cum[[season]],10))
+  ncs.results[[season]][[6]] <- colMeans(cal.nsc(grand.flowlag3[[season]],10))
+  ncs.results[[season]][[7]] <- colMeans(cal.nsc(grand.15year[[season]],10))
 }
 
 
-## Get the results
-rmse.rflow <- cal.rmse(results.rflow, fold)
-colMeans(rmse.rflow)
-
-nsc.rflow <- cal.nsc(results.rflow, fold)
-colMeans(nsc.rflow)
-
-
-
-
-#### Simple linear no lag with flow? ####
-## Forms
-form5 <- waterT ~ airT + flow + (1|location)
-results.sf <- vector("list", fold)
-
-
-## Iteration starts here
-for (i in 1:fold){
-  
-  compare <- NA
-  # select current dataset, and all unique location levels
-  current.training <- combined_training_list[[i]]
-  current.testing <- combined_testing_list[[i]]
-  loc.levels <- unique(current.training$location)
-  
-  # model training and predicting
-  model <- lmer(form5, data = current.training)
-  preds <- predict(model, newdata = current.testing, re.form=(~1|location))
-  
-  p <- as.data.frame(preds)
-  
-  # calculate RMSE
-  compare <- cbind(current.testing, preds = p$preds) %>% 
-    select(location, date, obs = waterT, preds)
-  
-  results.sf[[i]] <- compare
+# Overall RMSE for each model
+for (season in 1:5) {
+  c <- data.frame(lag5 = ncs.results[[season]][[1]],
+                  flow = ncs.results[[season]][[2]],
+                  inv = ncs.results[[season]][[3]],
+                  rqc = ncs.results[[season]][[4]],
+                  cum = ncs.results[[season]][[5]],
+                  flowlag3 = ncs.results[[season]][[6]],
+                  year15 = ncs.results[[season]][[7]])
+  print(colMeans(c))
 }
 
 
-## Get the results
-rmse.sf <- cal.rmse(results.sf, fold)
-colMeans(rmse.sf)
-
-nsc.sf <- cal.nsc(results.sf, fold)
-colMeans(nsc.sf)
 
 
+#### Get correlation between flow and water temperature ####
+cor.test(master.spring$inv, master.spring$waterT)
+ggplot(aes(x=sqrt(inv), y=waterT), data=master.spring)+
+  geom_point()
 
 
 
+#### Plotting ####
 
+season = 5
 
+plot.df <- grand.lag5[[season]][[1]] %>% filter(location == "bigotter")
+plot.df2 <- grand.inv[[season]][[1]] %>% filter(location == "bigotter")
 
-
-
-
+ggplot(data=plot.df, aes(x=date))+
+  geom_line(aes(x=date, y=obs), color = "black")+
+  geom_line(aes(x=date, y=preds), color = "red")+
+  geom_line(data = plot.df2, aes(x=date, y=preds), color = "blue")+
+  labs(x="date", y="temperature (°C)")+
+  theme_bw()
 
