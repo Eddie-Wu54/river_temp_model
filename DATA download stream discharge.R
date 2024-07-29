@@ -4,6 +4,7 @@
 #' 
 #' 1. We first get daily river discharge from the two sources.
 #' 2. We then get the 15-year average discharge as a proxy for river size.
+#' 3. We get the drainage area as a proxy for river size as well.
 
 
 library(tidyhydat) #for WSC date
@@ -220,7 +221,7 @@ write.csv(results.df, "tributary discharge.csv")
 #### Get 15-year average discharge ####
 
 #' Still using the same set of stations that we obtained before in the
-#' previous sections. We directly extrac the 15-year annual average by taking
+#' previous sections. We directly extract the 15-year annual average by taking
 #' the mean from the 15-year daily data.
 #' 
 #' Theses values are directly entered into a new csv file.
@@ -335,5 +336,63 @@ mean(genesee$flow)
 
 
 
+#### Get drainage area ####
+
+## Big creek
+station_data <- hy_stations(station_number = "02GC007")
+print(station_data$DRAINAGE_AREA_GROSS)
 
 
+## Big otter
+station_data <- hy_stations(station_number = "02GC026")
+print(station_data$DRAINAGE_AREA_GROSS)
+
+
+## Still
+station_data <- hy_stations(station_number = "02EA011")
+print(station_data$DRAINAGE_AREA_GROSS)
+
+
+## Mississagi
+station_data <- hy_stations(station_number = "02CC005")
+print(station_data$DRAINAGE_AREA_GROSS)
+
+
+## Nipigon
+station_data <- hy_stations(station_number = "02AD012")
+print(station_data$DRAINAGE_AREA_GROSS)
+
+
+## Humber (1998-2013, ect 2004,2010)
+station_data <- hy_stations(station_number = "02HC003")
+print(station_data$DRAINAGE_AREA_GROSS)
+
+
+## St.Louis (2011-2014)
+site_info <- readNWISsite(siteNumbers = "04024000")
+print(site_info$drain_area_va)
+
+
+## Saginaw (2012-2014)
+site_info <- readNWISsite(siteNumbers = "04157005")
+print(site_info$drain_area_va)
+
+
+## Fox (2011-2014)
+site_info <- readNWISsite(siteNumbers = "040851385")
+print(site_info$drain_area_va)
+
+
+## Portage-Burns Waterway (2011-2012)
+site_info <- readNWISsite(siteNumbers = "04095090")
+print(site_info$drain_area_va)
+
+
+## Vermilion (2012-2014)
+site_info <- readNWISsite(siteNumbers = "04199500")
+print(site_info$drain_area_va)
+
+
+## Genesee (2011-2013)
+site_info <- readNWISsite(siteNumbers = "04231600")
+print(site_info$drain_area_va)
