@@ -3,7 +3,7 @@
 #' the river temperatures were originally collected.
 #' 
 #' 1. We first get daily river discharge from the two sources.
-#' 2. We then get the 15-year average discharge as a proxy for river size.
+#' 2. We then get the 16-year average discharge as a proxy for river size.
 #' 3. We get the drainage area as a proxy for river size as well.
 
 
@@ -23,7 +23,7 @@ conv <- 0.028316847 #convert from cubic feet per second to cubic meter per secon
 
 download_hydat(dl_hydat_here = NULL, ask = TRUE)
 
-1
+
 tributary.loc <- read.csv("tributary locations.csv")
 tributary.loc.wsc <- tributary.loc[tributary.loc$country == "ca",]
 
@@ -156,7 +156,7 @@ humber <- hy_daily_flows(station_number = "02HC003",
 
 ## Get the tributary locations
 tributary.loc <- read.csv("tributary locations.csv")
-tributary.loc.usgs <- tributary.loc[tributary.loc$tributary.name == 
+tributary.loc.usgs <- tributary.loc[tributary.loc$tributary.name %in% 
                                       c("St.Louis River","Saginaw River",
                                         "Fox River","Portage-Burns Waterway",
                                         "Vermilion River","Genesee River"),]
@@ -221,15 +221,17 @@ write.csv(results.df, "tributary discharge.csv")
 #### Get 15-year average discharge ####
 
 #' Still using the same set of stations that we obtained before in the
-#' previous sections. We directly extract the 15-year annual average by taking
-#' the mean from the 15-year daily data.
+#' previous sections. We directly extract the 16-year annual average by taking
+#' the mean from the 16-year daily data.
+#' 
+#' Use 16 years during the study period... (1998-2014)
 #' 
 #' Theses values are directly entered into a new csv file.
 
 
 ## Big creek
 bigcreek <- hy_daily_flows(station_number = "02GC007",
-                           start_date = "2000-01-01", end_date = "2015-12-31") %>% 
+                           start_date = "1998-01-01", end_date = "2014-12-31") %>% 
   mutate(location = "bigcreek") %>% 
   select(location, station_id = STATION_NUMBER, Date, flow = Value)
 
@@ -238,7 +240,7 @@ mean(bigcreek$flow)
 
 ## Big otter
 bigotter <- hy_daily_flows(station_number = "02GC026",
-                           start_date = "2000-01-01", end_date = "2015-12-31") %>%
+                           start_date = "1998-01-01", end_date = "2014-12-31") %>%
   mutate(location = "bigotter") %>% 
   select(location, station_id = STATION_NUMBER, Date, flow = Value)
 
@@ -247,7 +249,7 @@ mean(bigotter$flow)
 
 ## Still
 still <- hy_daily_flows(station_number = "02EA011",
-                        start_date = "2000-01-01", end_date = "2015-12-31") %>% 
+                        start_date = "1998-01-01", end_date = "2014-12-31") %>% 
   mutate(location = "still") %>% 
   select(location, station_id = STATION_NUMBER, Date, flow = Value)
 
@@ -255,7 +257,7 @@ mean(still$flow)
 
 ## Mississagi
 mississagi <- hy_daily_flows(station_number = "02CC005",
-                             start_date = "2000-01-01", end_date = "2015-12-31") %>% 
+                             start_date = "1998-01-01", end_date = "2014-12-31") %>% 
   mutate(location = "mississagi") %>% 
   select(location, station_id = STATION_NUMBER, Date, flow = Value)
 
@@ -264,7 +266,7 @@ mean(mississagi$flow)
 
 ## Nipigon
 nipigon <- hy_daily_flows(station_number = "02AD012",
-                          start = "2000-01-01", end = "2015-12-31") %>% 
+                          start = "1998-01-01", end = "2014-12-31") %>% 
   mutate(location = "nipigon") %>% 
   select(location, station_id = STATION_NUMBER, Date, flow = Value)
 
@@ -273,7 +275,7 @@ mean(nipigon$flow, na.rm = T)
 
 ## Humber (1998-2013, ect 2004,2010)
 humber <- hy_daily_flows(station_number = "02HC003",
-                         start_date = "2000-01-01", end_date = "2015-12-31") %>% 
+                         start_date = "1998-01-01", end_date = "2014-12-31") %>% 
   mutate(location = "humber") %>% 
   select(location, station_id = STATION_NUMBER, Date, flow = Value)
 
@@ -282,7 +284,7 @@ mean(humber$flow)
 
 ## St.Louis (2011-2014)
 stlouis <- readNWISdv(siteNumbers = "04024000", parameterCd = "00060",
-                      startDate = "2000-01-01", endDate = "2015-12-31") %>%
+                      startDate = "1998-01-01", endDate = "2014-12-31") %>%
   mutate(flow = X_00060_00003*conv, location = "stlouis") %>% 
   select(location, station_id = site_no, Date, flow)
 
@@ -291,7 +293,7 @@ mean(stlouis$flow)
 
 ## Saginaw (2012-2014)
 saginaw <- readNWISdv(siteNumbers = "04157005", parameterCd = "00060",
-                      startDate = "2000-01-01", endDate = "2015-12-31") %>% 
+                      startDate = "1998-01-01", endDate = "2014-12-31") %>% 
   mutate(flow = X_00060_00003*conv, location = "saginaw") %>% 
   select(location, station_id = site_no, Date, flow)
 
@@ -300,7 +302,7 @@ mean(saginaw$flow)
 
 ## Fox (2011-2014)
 fox <- readNWISdv(siteNumbers = "040851385", parameterCd = "00060",
-                  startDate = "2000-01-01", endDate = "2015-12-31") %>% 
+                  startDate = "1998-01-01", endDate = "2014-12-31") %>% 
   mutate(flow = X_00060_00003*conv, location = "fox") %>% 
   select(location, station_id = site_no, Date, flow)
 
@@ -309,7 +311,7 @@ mean(fox$flow)
 
 ## Portage-Burns Waterway (2011-2012)
 pb <- readNWISdv(siteNumbers = "04095090", parameterCd = "00060",
-                 startDate = "2000-01-01", endDate = "2015-12-31") %>% 
+                 startDate = "1998-01-01", endDate = "2014-12-31") %>% 
   mutate(flow = X_00060_00003*conv, location = "portage") %>% 
   select(location, station_id = site_no, Date, flow)
 
@@ -318,7 +320,7 @@ mean(pb$flow)
 
 ## Vermilion (2012-2014)
 vermilion <- readNWISdv(siteNumbers = "04199500", parameterCd = "00060",
-                        startDate = "2001-01-01", endDate = "2015-12-31") %>% 
+                        startDate = "1998-01-01", endDate = "2014-12-31") %>% 
   mutate(flow = X_00060_00003*conv, location = "vermilion") %>% 
   select(location, station_id = site_no, Date, flow)
 
@@ -327,7 +329,7 @@ mean(vermilion$flow)
 
 ## Genesee (2011-2013)
 genesee <- readNWISdv(siteNumbers = "04231600", parameterCd = "00060",
-                      startDate = "2000-01-01", endDate = "2015-12-31") %>% 
+                      startDate = "1998-01-01", endDate = "2014-12-31") %>% 
   mutate(flow = X_00060_00003*conv, location = "genesee") %>% 
   select(location, station_id = site_no, Date, flow)
 
@@ -396,3 +398,10 @@ print(site_info$drain_area_va)
 ## Genesee (2011-2013)
 site_info <- readNWISsite(siteNumbers = "04231600")
 print(site_info$drain_area_va)
+
+
+start_date <- "2013-01-01"
+end_date <- "2014-12-31"
+temp_data <- readNWISdv(siteNumbers = "04095090", parameterCd = "00010", startDate = start_date, endDate = end_date)
+
+write.csv(temp_data, file="newd.csv")
