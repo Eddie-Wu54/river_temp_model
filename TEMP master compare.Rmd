@@ -24,12 +24,12 @@ This R markdown file is used to
 
 ```{r library, warning=FALSE, message=FALSE}
 library(dplyr)
-library(tidyverse)
 library(nlme)
 library(xts)
 library(zoo)
 library(lubridate)
 library(drc)
+library(ggplot2)
 ```
 
 ```{r functions}
@@ -196,30 +196,29 @@ awf <- awf %>%
          dmean_3 = lag(mean_temp, 3),
          dmean_4 = lag(mean_temp, 4),
          dmean_5 = lag(mean_temp, 5),
-         dflow_1 = lag(flow, 1))
+         dmean_6 = lag(mean_temp, 6))
 
 
 ## Get cumulative air temp for past five days
 awf <- awf %>% 
   rowwise() %>% 
-  mutate(cair = (mean_temp+dmean_1+dmean_2+dmean_3+dmean_4+dmean_5)/6) %>% 
-  ungroup()
-
-## Get relative flow
-awf <- awf %>% mutate(rqc = (flow - dflow_1)/flow)
+  mutate(cair=(mean_temp+dmean_1+dmean_2+dmean_3+dmean_4+dmean_5+dmean_6)/7) %>% 
+  ungroup() %>% 
+  as.data.frame()
 ```
 
 
 ### Get final master temp dataframe
 
 ```{r master temp}
-master.temp <- awf[complete.cases(cbind(awf$mean_temp,awf$temp)),] %>% 
-  select(location, date, station_name, country,
+master.temp <- awf[complete.cases(cbind(awf$mean_temp,awf$temp)),] %>%
+  dplyr::select(location, date, station_name, country,
          year, month = month.x, day = day.x,
          water = temp, air = mean_temp, dmean_1, dmean_2, dmean_3,
-         dmean_4, dmean_5, flow, dflow_1, rqc, cair)
+         dmean_4, dmean_5, dmean_6, flow, cair)
 
-master.temp <- master.temp[complete.cases(master.temp[,8:18]),]
+
+master.temp <- master.temp[complete.cases(master.temp[,8:17]),]
 ```
 
 
@@ -231,7 +230,7 @@ master.temp <- master.temp[complete.cases(master.temp[,8:18]),]
 
 We want the seasonal data to be greater than 60 days, annual data (winter removed) more than 180 days.
 
-```{r good years, echo=FALSE}
+```{r good years, eval=FALSE}
 ## Annual (250 days)
 fulyear <- good_year(master.annual, 180)
 
@@ -298,12 +297,12 @@ y = cbind(loc_seq,ytrain,ytest)
 current.training <- merge(master.temp, y,
                           by.x = c("location", "year"),
                           by.y = c("loc_seq", "ytrain")) %>% 
-  arrange(location, date)
+  arrange(location, date) %>% na.omit()
 
 current.testing <- merge(master.temp, y,
                           by.x = c("location", "year"),
                           by.y = c("loc_seq", "ytest")) %>% 
-  arrange(location, date)
+  arrange(location, date) %>% na.omit()
 
 
 # breakpoint
@@ -351,7 +350,7 @@ We run all three candidate models on 12 tributary locations separately. For each
 ```{r linear individual}
 ## Coefs
 coef.lag6 <- matrix(NA, ncol=8, nrow=12)
-colnames(coef.lag6) <- c("a","b","c","d","e","f","g","h")
+colnames(coef.lag6) <- c("a","b1","b2","b3","b4","b5","b6","b7")
 rownames(coef.lag6) <- loc_seq
 
 
@@ -404,7 +403,11 @@ for (loc in loc_seq){
   print(pl)
   
   
-  ## get coef
+  ## get coefs
+  dfcoef <- rbind(dftrain[,1:17], dftest[,1:17])
+  model.ar <- gls(form.locrandom, control = ctrl,
+                  na.action = na.omit, data = dfcoef,
+                  correlation=corAR1())
   for (c in 1:8){coef.lag6[loc,c]=signif(coef(model.ar)[c],2)}
 }
 ```
@@ -414,8 +417,8 @@ for (loc in loc_seq){
 
 ```{r seasonal individual}
 ## Coefs
-coef.season <- matrix(NA, ncol=6, nrow=12)
-colnames(coef.season) <- c("a","b","c","beta1","beta2","beta3")
+coef.season <- matrix(NA, ncol=9, nrow=12)
+colnames(coef.season) <- c("a","b","c","d","f","g","beta1","beta2","beta3")
 rownames(coef.season) <- loc_seq
 
 
@@ -510,11 +513,37 @@ for (loc in loc_seq){
             bias.r[loc,2], ")"))
   print(pl)
   
+  
   ## get coefs
+  dfcoef <- rbind(dftrain[,1:17], dftest[,1:17])
+  annual.air <- nls(air ~ a+b*sin(2*pi/365*(yday(date)+t0)),
+                    start = list(a=0.05, b=5, t0=-26),
+                    data=dfcoef)
+  annual.water <- nls(water ~ a+b*sin(2*pi/365*(yday(date)+t0)),
+                      start = list(a=0.05, b=5, t0=-26),
+                      data=dfcoef)
+  # get the air temperature residuals
+  res <- as.data.frame(matrix(NA, ncol = 2, 
+                            nrow = length(na.omit(dfcoef$air))))
+  # dataframe to store the residuals
+  colnames(res) <- c("res.t", "location")
+  res[,"location"] <- na.omit(dfcoef$location)
+  res[,"res.t"] <- as.vector(residuals(annual.air))
+  res <- res %>% group_by(location) %>%
+    mutate(res.t1 = lag(res.t, 1),
+           res.t2 = lag(res.t, 2))
+  res[,"res.w"] <- residuals(annual.water)
+  # get the water temperature residual component
+  residual.comp.ar <- gls(res.w ~ res.t + res.t1 + res.t2,
+                          correlation = corAR1(),
+                          data = res, na.action = na.omit,
+                          control = ctrl)
   
   for (c in 1:3){
-    coef.season[loc,c]=signif(coef(annual.comp)[c],2)
-    coef.season[loc,c+3]=signif(coef(residual.comp.ar)[c+1],2)}
+    coef.season[loc,c]=signif(coef(annual.air)[c],2)
+    coef.season[loc,c+3]=signif(coef(annual.water)[c],2)
+    coef.season[loc,c+6]=signif(coef(residual.comp.ar)[c+1],2)
+  }
 }
 ```
 
@@ -531,12 +560,8 @@ rownames(coef.nonl) <- loc_seq
 # For each location
 for (loc in loc_seq){
   
-    dftrain = current.training[current.training$location == loc,] %>% 
-      rowwise() %>% 
-      mutate(cair = mean(c_across(9:15)))
-    dftest = current.testing[current.testing$location == loc,] %>% 
-      rowwise() %>% 
-      mutate(cair = mean(c_across(9:15)))
+    dftrain = current.training[current.training$location == loc,]
+    dftest = current.testing[current.testing$location == loc,]
     compare <- dftest
     
     # coefs
@@ -589,6 +614,11 @@ for (loc in loc_seq){
   
   
   ## get coefs
+  dfcoef <- rbind(dftrain[,1:17], dftest[,1:17])
+  model.new <- gnls(water ~ alpha / (1 + exp(gamma * (beta - cair))),
+                    data = dfcoef, na.action = na.omit,
+                    start = co, correlation = corAR1(),
+                    control=gnlsControl(nlsTol=1000, maxIter=1000))
   for (c in 1:3){coef.nonl[loc,c]=signif(coef(model.new)[c],2)}
 }
 ```
