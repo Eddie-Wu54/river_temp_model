@@ -15,9 +15,9 @@ knitr::opts_chunk$set(echo = TRUE)
 
 This R markdown file is used to
 
-1. Fit models on a seasonal scale (all four seasons).
+1. Fit candidate models on a seasonal scale (all four seasons, and annual).
 
-2. See how seasonal fits change compared to annual fit.
+2. Get model coefficients and performance metrics calculations from all candidate models.
 
 **All Models are mixed-effect with location as the random factor.*
 
@@ -356,9 +356,10 @@ grand_testing <- list(combined_testing_list_sp, combined_testing_list_su,
 
 ## Model Comparison
 
-We now run each of the three models five times, once on each of the four seasons, and annual data.
+We now run each of the three models ten times, once on each of the four seasons, and annual data.
 
 **Important: Here we only look at the model output from models with corAR1() value fixed at 0.8. To check the ACF, please refer to the TEMP temporal autocorrelation document.**
+
 
 ### Linear lag5
 
@@ -366,6 +367,11 @@ We now run each of the three models five times, once on each of the four seasons
 ## Forms
 ctrl = lmeControl(opt='optim')
 form1 <- water ~ air + dmean_1 + dmean_2 + dmean_3 + dmean_4 + dmean_5
+
+coef.lag5 <- data.frame(matrix(NA,50,7))
+colnames(coef.lag5) <- c("a","b","c","d","e","f","g")
+seasons <- rep(c(1,2,3,4,5), each = 10)
+coef.lag5$season <- seasons
 
 spring.r <- vector("list", fold)
 summer.r <- vector("list", fold)
@@ -401,13 +407,15 @@ for (season in 1:5) {
       model.ar, newdata = current.testing, re.form = ~1|location))
     
     grand.lag5[[season]][[i]] <- compare
+    coef.lag5[10*(season-1)+i,1:7] = coef(model.ar)[1,]
+    #intercept only for bigcreek
   }
 }
 
 
 ## Plots
 for (loc in loc_seq) {
-  df <- grand.lag5[[2]][[1]]
+  df <- grand.lag5[[5]][[1]]
   plot.df <- df[df$location == loc,]
   diff.ar <- round(sqrt(mean((plot.df$preds.ar-plot.df$water)^2)),2)
 
@@ -420,10 +428,16 @@ for (loc in loc_seq) {
 }
 ```
 
+
 ### Seasonal residual
 
 ```{r stochastic}
-## Forms
+coef.sto <- data.frame(matrix(NA,50,7))
+colnames(coef.sto) <- c("a","b","c","beta1","beta2","beta3","d")
+seasons <- rep(c(1,2,3,4,5), each = 10)
+coef.sto$season <- seasons
+
+
 spring.r <- vector("list", fold)
 summer.r <- vector("list", fold)
 fall.r <- vector("list", fold)
@@ -507,13 +521,16 @@ for (season in 1:5) {
       select(location, year, date, water, preds.ar, preds.annual)
     
     grand.sto[[season]][[i]] <- compare
+    coef.sto[10*(season-1)+i,1:3] = coef(annual.comp)
+    coef.sto[10*(season-1)+i,4:6] = coef(residual.comp.ar)[1,2:4]
+    coef.sto[10*(season-1)+i,7] = coef(residual.comp.ar)[1,1]
   }
 }
 
 
 ## Plots
 for (loc in loc_seq) {
-  df <- grand.sto[[2]][[1]]
+  df <- grand.sto[[5]][[1]]
   plot.df <- df[df$location == loc,]
   diff.ar <- round(sqrt(mean((plot.df$preds.ar-plot.df$water)^2)),2)
 
@@ -526,14 +543,21 @@ for (loc in loc_seq) {
 }
 ```
 
+
 ### Non-linear
 
-```{r non-linear, eval=TRUE}
+```{r non-linear, eval=TRUE, warning=FALSE}
+coef.nonlinear <- data.frame(matrix(NA,50,3))
+colnames(coef.nonlinear) <- c("alpha","gamma","beta")
+seasons <- rep(c(1,2,3,4,5), each = 10)
+coef.nonlinear$season <- seasons
+
+
 ## starting parameters
-coef.spring <- c(alpha=20, gamma=5,beta=9)
-coef.summer <- c(alpha=25, gamma=7,beta=10)
-coef.fall <- c(alpha=27, gamma=8,beta=10)
-coef.annual <- c(alpha=20, gamma=5,beta=9)
+coef.spring <- c(alpha=30, gamma=0.05,beta=10)
+coef.summer <- c(alpha=25, gamma=0.05,beta=10)
+coef.fall <- c(alpha=30, gamma=0.05,beta=10)
+coef.annual <- c(alpha=20, gamma=0.05,beta=9)
 
 coef.list <- list(coef.spring, coef.summer, coef.fall, NA, coef.annual)
 
@@ -567,7 +591,7 @@ for (season in c(1,2,3,5)) {
     model <- nlme(water ~ alpha / (1 + exp(gamma * (beta - cair))),
                   fixed = list(alpha~1,gamma~1,beta~1),
                   random = gamma ~ 1|location,
-                  start = c(alpha=26,gamma=7,beta=10),
+                  start = coef.list[[season]],
                   data = current.training, na.action = na.omit,
                   control = list(msMaxIter = 200))
     
@@ -575,6 +599,7 @@ for (season in c(1,2,3,5)) {
       model, newdata = current.testing, re.form = ~1|location))
   
     grand.nonlinear[[season]][[i]] <- compare
+    coef.nonlinear[10*(season-1)+i,1:3] <- coef(model)
   }
 }
 ```
@@ -627,7 +652,7 @@ for (season in 1:5) {
 
 ## Plots
 for (loc in loc_seq) {
-  df <- grand.flow[[2]][[1]]
+  df <- grand.flow[[5]][[1]]
   plot.df <- df[df$location == loc,]
   diff.ar <- round(sqrt(mean((plot.df$preds.ar-plot.df$water)^2)),2)
 
@@ -708,7 +733,7 @@ knitr::kable(spring.compare, digits = 3)
 summer.compare <- data.frame(
   lag5 = colMeans(cal.nsc(grand.lag5[[2]], fold), na.rm=T),
   sto = colMeans(cal.nsc(grand.sto[[2]], fold), na.rm=T),
-  nonlinear = colMeans(cal.nsc), na.rm=T),
+  nonlinear = colMeans(cal.nsc(grand.nonlinear[[2]], fold), na.rm=T),
   flow = colMeans(cal.nsc(grand.flow[[2]], fold), na.rm=T))
 
 colMeans(summer.compare)
@@ -774,3 +799,18 @@ nonlinear.compare <- data.frame(
 colMeans(nonlinear.compare)
 knitr::kable(flow.compare, digits = 3)
 ```
+
+### Extract model coefficients
+
+```{r coefs}
+View(coef.lag5)
+
+for(s in 1:5) {
+  c = coef.lag5[coef.lag5$season == s,]
+  print(round(colMeans(c),2))
+}
+
+
+```
+
+
