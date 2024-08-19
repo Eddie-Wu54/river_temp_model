@@ -148,12 +148,91 @@ master.temp <- master.temp[complete.cases(master.temp[,8:25]),]
 
 
 
+
+#### Run on one location only ####
+
 ## Create a list to store all the models (for AIC comparison later)
 model.list <- vector("list", 5)
 
 
-#### Run 7 different models with different flow input ####
 ## Model forms
+formcon <- water ~ flow
+formnull <- water ~ air + dmean_1 + dmean_2 + dmean_3 + dmean_4 + dmean_5
+form1 <- water ~ air + dmean_1 + dmean_2 + dmean_3 + dmean_4 + dmean_5 + flow
+form2 <- water ~ air + dmean_1 + dmean_2 + dmean_3 + dmean_4 + dmean_5 + inv
+form3 <- water ~ air + dmean_1 + dmean_2 + dmean_3 + dmean_4 + dmean_5 + rqc
+form4 <- water ~ air + dmean_1 + dmean_2 + dmean_3 + dmean_4 + dmean_5 + cumflow
+form5 <- water ~ air + dmean_1 + dmean_2 + dmean_3 + dmean_4 + dmean_5 + dflow_1 + dflow_2 + dflow_3
+form6 <- water ~ air + dmean_1 + dmean_2 + dmean_3 + dmean_4 + dmean_5 + X15.year.average
+
+
+i=1
+season=5
+
+compare <- NA
+# select current dataset, and all unique location levels
+current.training <- grand_training[[season]][[i]] %>% filter(location == "bigcreek")
+current.testing <- grand_testing[[season]][[i]] %>% filter(location == "bigcreek")
+
+
+# model training
+model.con <- gls(formcon, method="ML",
+                 correlation=corAR1(form=~1|location, value = 0.85, fixed=T),
+                 na.action = na.omit, data = current.training)
+model.null <- gls(formnull, method="ML",
+                  correlation=corAR1(form=~1|location, value = 0.85, fixed=T),
+                  na.action = na.omit, data = current.training)
+model.flow <- gls(form1, method="ML",
+                  correlation=corAR1(form=~1|location, value = 0.85, fixed=T),
+                  na.action = na.omit, data = current.training)
+model.inv <- gls(form2, method="ML",
+                 correlation=corAR1(form=~1|location, value = 0.85, fixed=T),
+                 na.action = na.omit, data = current.training)
+model.rqc <- gls(form3, method="ML",
+                 correlation=corAR1(form=~1|location, value = 0.85, fixed=T),
+                 na.action = na.omit, data = current.training)
+model.cum <- gls(form4, method="ML",
+                 correlation=corAR1(form=~1|location, value = 0.85, fixed=T),
+                 na.action = na.omit, data = current.training)
+model.flowlag3 <- gls(form5, method="ML",
+                      correlation=corAR1(form=~1|location, value = 0.85, fixed=T),
+                      na.action = na.omit, data = current.training)
+#model.15year <- gls(form6, method="ML",
+#correlation=corAR1(form=~1|location, value = 0.85, fixed=T),
+#na.action = na.omit, data = current.training)
+
+# model predictions
+p <- cbind(current.testing,
+           preds.con = predict(model.con, newdata = current.testing),
+           preds.null = predict(model.null, newdata = current.testing),
+           preds.flow = predict(model.flow, newdata = current.testing),
+           preds.inv = predict(model.inv, newdata = current.testing),
+           preds.rqc = predict(model.rqc, newdata = current.testing),
+           preds.cum = predict(model.cum, newdata = current.testing),
+           preds.flowlag3 = predict(model.flowlag3, newdata = current.testing))
+
+
+## Calculate RMSE
+round(sqrt(mean((p$water-p$preds.con)^2)),2)
+round(sqrt(mean((p$water-p$preds.null)^2)),2)
+round(sqrt(mean((p$water-p$preds.flow)^2)),2)
+round(sqrt(mean((p$water-p$preds.inv)^2)),2)
+round(sqrt(mean((p$water-p$preds.rqc)^2)),2)
+round(sqrt(mean((p$water-p$preds.cum)^2)),2)
+round(sqrt(mean((p$water-p$preds.flowlag3)^2)),2)
+
+
+
+
+
+#### TRY 1: Run 7 different linear models with different flow input ####
+
+## Create a list to store all the models (for AIC comparison later)
+model.list <- vector("list", 5)
+
+
+## Model forms
+formcon <- water ~ flow
 formnull <- water ~ air + dmean_1 + dmean_2 + dmean_3 + dmean_4 + dmean_5
 form1 <- water ~ air + dmean_1 + dmean_2 + dmean_3 + dmean_4 + dmean_5 + flow
 form2 <- water ~ air + dmean_1 + dmean_2 + dmean_3 + dmean_4 + dmean_5 + inv
@@ -170,6 +249,7 @@ fall.r <- vector("list", fold)
 winter.r <- vector("list", fold)
 annual.r <- vector("list", fold)
 
+grand.con <- list(spring.r, summer.r, fall.r, winter.r, annual.r)
 grand.lag5 <- list(spring.r, summer.r, fall.r, winter.r, annual.r)
 grand.flow <- list(spring.r, summer.r, fall.r, winter.r, annual.r)
 grand.inv <- list(spring.r, summer.r, fall.r, winter.r, annual.r)
@@ -196,29 +276,33 @@ for (season in 1:5) {
     current.testing <- test[[i]]
     
     # model training
-    model.null <- lme(fixed = formnull, random = ~1 | location,
+    model.con <- lme(fixed = formcon, random = ~1 | location, method="ML",
                      correlation=corAR1(form=~1|location, value = 0.85, fixed=T),
                      na.action = na.omit, data = current.training)
-    model.flow <- lme(fixed = form1, random = ~1 | location,
+    model.null <- lme(fixed = formnull, random = ~1 | location, method="ML",
+                     correlation=corAR1(form=~1|location, value = 0.85, fixed=T),
+                     na.action = na.omit, data = current.training)
+    model.flow <- lme(fixed = form1, random = ~1 | location, method="ML",
                       correlation=corAR1(form=~1|location, value = 0.85, fixed=T),
                       na.action = na.omit, data = current.training)
-    model.inv <- lme(fixed = form2, random = ~1 | location,
+    model.inv <- lme(fixed = form2, random = ~1 | location, method="ML",
                       correlation=corAR1(form=~1|location, value = 0.85, fixed=T),
                       na.action = na.omit, data = current.training)
-    model.rqc <- lme(fixed = form3, random = ~1 | location,
+    model.rqc <- lme(fixed = form3, random = ~1 | location, method="ML",
                       correlation=corAR1(form=~1|location, value = 0.8, fixed=T),
                       na.action = na.omit, data = current.training)
-    model.cum <- lme(fixed = form4, random = ~1 | location,
+    model.cum <- lme(fixed = form4, random = ~1 | location, method="ML",
                       correlation=corAR1(form=~1|location, value = 0.8, fixed=T),
                       na.action = na.omit, data = current.training)
-    model.flowlag3 <- lme(fixed = form5, random = ~1 | location,
+    model.flowlag3 <- lme(fixed = form5, random = ~1 | location, method="ML",
                       correlation=corAR1(form=~1|location, value = 0.8, fixed=T),
                       na.action = na.omit, data = current.training)
-    model.15year <- lme(fixed = form6, random = ~1 | location,
+    model.15year <- lme(fixed = form6, random = ~1 | location, method="ML",
                       correlation=corAR1(form=~1|location, value = 0.8, fixed=T),
                       na.action = na.omit, data = current.training)
     
     # model predictions
+    preds.con <- as.data.frame(predict(model.con, newdata = current.testing, re.form=~(1|location)))
     preds.null <- as.data.frame(predict(model.null, newdata = current.testing, re.form=~(1|location)))
     preds.flow <- as.data.frame(predict(model.flow, newdata = current.testing, re.form=~(1|location)))
     preds.inv <- as.data.frame(predict(model.inv, newdata = current.testing, re.form=~(1|location)))
@@ -228,6 +312,8 @@ for (season in 1:5) {
     preds.15year <- as.data.frame(predict(model.15year, newdata = current.testing, re.form=~(1|location)))
     
     # combine into a dataframe
+    grand.con[[season]][[i]] <- cbind(current.testing, preds = preds.con[,1]) %>% 
+      select(location, date, obs = water, preds)
     grand.lag5[[season]][[i]] <- cbind(current.testing, preds = preds.null[,1]) %>% 
       select(location, date, obs = water, preds)
     grand.flow[[season]][[i]] <- cbind(current.testing, preds = preds.flow[,1]) %>% 
@@ -245,6 +331,7 @@ for (season in 1:5) {
   }
   
   # store models in a model dataframe
+  model.list[[season]][["con"]] <- model.con
   model.list[[season]][["lag5"]] <- model.null
   model.list[[season]][["flow"]] <- model.flow
   model.list[[season]][["inv"]] <- model.inv
@@ -262,7 +349,8 @@ for (season in 1:5) {
 aic.results <- vector("list", 5)
 
 for (season in 1:5){
-  aic.results[[season]] <- anova(model.list[[season]][["lag5"]],
+  aic.results[[season]] <- anova(model.list[[season]][["con"]],
+                                 model.list[[season]][["lag5"]],
                                  model.list[[season]][["flow"]],
                                  model.list[[season]][["inv"]],
                                  model.list[[season]][["rqc"]],
@@ -281,29 +369,75 @@ for (season in 1:5) {
 
 #### Check model preformance (RMSE and NSC) ####
 
+## FUNCTIONS
+cal.rmse <- function(out.list, fold) {
+  
+  # data frame to store the results
+  r <- matrix(NA, nrow=fold, ncol=length(loc_seq))
+  colnames(r) <- unique(loc_seq)
+  
+  # 10 iterations
+  for (i in 1:fold){
+    compare <- out.list[[i]]
+    
+    # calculate rmse
+    for (loc in unique(compare$location)) {
+      compare.now <- subset(compare, location == loc) %>% na.omit()
+      r[i,loc] <- round(sqrt(mean((compare.now$obs-compare.now$preds)^2)),2)
+    }
+  }
+  return(r)
+}
+
+cal.nsc <- function(out.list, fold) {
+  
+  # data frame to store the results
+  r <- matrix(NA, nrow=fold, ncol=length(loc_seq))
+  colnames(r) <- unique(loc_seq)
+  
+  # 10 iterations
+  for (i in 1:fold){
+    compare <- out.list[[i]]
+    
+    # calculate nsc
+    for (loc in unique(compare$location)) {
+      compare.now <- subset(compare, location == loc) %>% na.omit()
+      nsc <- 1 - sum((compare.now$obs - compare.now$preds)^2) / sum((compare.now$obs - mean(compare.now$obs))^2)
+      r[i,loc] <- nsc
+    }
+  }
+  return(r)
+}
+
+
 ## RMSE
 rmse.results <- vector("list", 5)
 
+cal.rmse(grand.lag5[[2]],fold)
+
 for (season in 1:5) {
-  rmse.results[[season]][[1]] <- colMeans(cal.rmse(grand.lag5[[season]],10))
-  rmse.results[[season]][[2]] <- colMeans(cal.rmse(grand.flow[[season]],10))
-  rmse.results[[season]][[3]] <- colMeans(cal.rmse(grand.inv[[season]],10))
-  rmse.results[[season]][[4]] <- colMeans(cal.rmse(grand.rqc[[season]],10))
-  rmse.results[[season]][[5]] <- colMeans(cal.rmse(grand.cum[[season]],10))
-  rmse.results[[season]][[6]] <- colMeans(cal.rmse(grand.flowlag3[[season]],10))
-  rmse.results[[season]][[7]] <- colMeans(cal.rmse(grand.15year[[season]],10))
+  rmse.results[[season]][[1]] <- colMeans(cal.rmse(grand.con[[season]],fold),na.rm=T)
+  rmse.results[[season]][[2]] <- colMeans(cal.rmse(grand.lag5[[season]],fold), na.rm=T)
+  rmse.results[[season]][[3]] <- colMeans(cal.rmse(grand.flow[[season]],fold), na.rm=T)
+  rmse.results[[season]][[4]] <- colMeans(cal.rmse(grand.inv[[season]],fold), na.rm=T)
+  rmse.results[[season]][[5]] <- colMeans(cal.rmse(grand.rqc[[season]],fold), na.rm=T)
+  rmse.results[[season]][[6]] <- colMeans(cal.rmse(grand.cum[[season]],fold), na.rm=T)
+  rmse.results[[season]][[7]] <- colMeans(cal.rmse(grand.flowlag3[[season]],fold), na.rm=T)
+  rmse.results[[season]][[8]] <- colMeans(cal.rmse(grand.15year[[season]],fold), na.rm=T)
 }
+
 
 
 # Overall RMSE for each model
 for (season in 1:5) {
-  c <- data.frame(lag5 = rmse.results[[season]][[1]],
-                  flow = rmse.results[[season]][[2]],
-                  inv = rmse.results[[season]][[3]],
-                  rqc = rmse.results[[season]][[4]],
-                  cum = rmse.results[[season]][[5]],
-                  flowlag3 = rmse.results[[season]][[6]],
-                  year15 = rmse.results[[season]][[7]])
+  c <- data.frame(con = rmse.results[[season]][[1]],
+                  lag5 = rmse.results[[season]][[2]],
+                  flow = rmse.results[[season]][[3]],
+                  inv = rmse.results[[season]][[4]],
+                  rqc = rmse.results[[season]][[5]],
+                  cum = rmse.results[[season]][[6]],
+                  flowlag3 = rmse.results[[season]][[7]],
+                  year15 = rmse.results[[season]][[8]])
   print(colMeans(c))
 }
 
@@ -313,13 +447,13 @@ for (season in 1:5) {
 ncs.results <- vector("list", 5)
 
 for (season in 1:5) {
-  ncs.results[[season]][[1]] <- colMeans(cal.nsc(grand.lag5[[season]],10))
-  ncs.results[[season]][[2]] <- colMeans(cal.nsc(grand.flow[[season]],10))
-  ncs.results[[season]][[3]] <- colMeans(cal.nsc(grand.inv[[season]],10))
-  ncs.results[[season]][[4]] <- colMeans(cal.nsc(grand.rqc[[season]],10))
-  ncs.results[[season]][[5]] <- colMeans(cal.nsc(grand.cum[[season]],10))
-  ncs.results[[season]][[6]] <- colMeans(cal.nsc(grand.flowlag3[[season]],10))
-  ncs.results[[season]][[7]] <- colMeans(cal.nsc(grand.15year[[season]],10))
+  ncs.results[[season]][[1]] <- colMeans(cal.nsc(grand.lag5[[season]],10), na.rm=T)
+  ncs.results[[season]][[2]] <- colMeans(cal.nsc(grand.flow[[season]],10), na.rm=T)
+  ncs.results[[season]][[3]] <- colMeans(cal.nsc(grand.inv[[season]],10), na.rm=T)
+  ncs.results[[season]][[4]] <- colMeans(cal.nsc(grand.rqc[[season]],10), na.rm=T)
+  ncs.results[[season]][[5]] <- colMeans(cal.nsc(grand.cum[[season]],10), na.rm=T)
+  ncs.results[[season]][[6]] <- colMeans(cal.nsc(grand.flowlag3[[season]],10), na.rm=T)
+  ncs.results[[season]][[7]] <- colMeans(cal.nsc(grand.15year[[season]],10), na.rm=T)
 }
 
 
@@ -358,4 +492,6 @@ ggplot(data=plot.df, aes(x=date))+
   geom_line(data = plot.df2, aes(x=date, y=preds), color = "blue")+
   labs(x="date", y="temperature (°C)")+
   theme_bw()
+
+
 
