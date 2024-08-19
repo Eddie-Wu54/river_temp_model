@@ -1,11 +1,9 @@
 #' This script:
 #' 
-#' 1. Extracts the average weekly water temperature data (for 27 years) from the
-#' global water temperature model for all 12 GREAT LAKES tributary locations.
+#' 1. Extracts the average weekly water temperature data from the global water
+#' temperature model for all 12 GREAT LAKES tributary locations (year 1996-2019).
 #' 
-#' 2. Calculate the average throughout the Years.
-#' 
-#' 3. Export the weekly average water temperature for each location separately.
+#' 2. Get the water temperature for the entire period for each location.
 
 
 library(raster)
