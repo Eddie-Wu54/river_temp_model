@@ -1,0 +1,221 @@
+---
+title: "Untitled"
+author: "Kim Cuddington"
+date: "12/07/2024"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Eddie air and water temp data
+
+```{r import}
+#import data
+air=read.csv("tributary air temperatures clean.csv", stringsAsFactors = FALSE)
+water <- read.csv("tributary water temperature/water_temperature_d.csv", stringsAsFactors = FALSE)
+
+#merge data sets
+aw=merge(air,water, by=c("station_name", "date"))
+```
+
+## Process data
+
+
+```{r data}
+#change classes/calc min/max mean
+aw$date=as.Date(aw$date, "%m/%d/%Y")
+aw$station_name=as.factor(aw$station_name)
+aw$location=as.factor(aw$location)
+aw$dmean=(aw$max_temp+aw$min_temp)/2
+
+# arrange by location and date
+aw <- aw %>% arrange(location, date)
+
+# calculate lags
+lgn=function(x,lag)c(rep(NA, lag), x[1:(length(x)-lag)])
+aw$dmean_2=lgn(aw$dmean, 2)
+aw$dmean_3=lgn(aw$dmean, 3)
+
+# get vector of locations
+loc_seq=levels(aw$location)
+
+# removing missing data
+aw=aw[complete.cases(cbind(aw$dmean,aw$dmean_2,aw$dmean_3,aw$temp)),]
+```
+
+
+```{r impute check}
+# make sure that no initial NA values in watertemp
+which(is.na(aw$temp))
+
+
+for(loc in loc_seq) {
+  sub <- aw[aw$location == loc,]
+  sub$rolling_mean <- rollmean(sub$temp, k = 7, fill = NA, align = "right")
+  aw[aw$location == loc, "rolling_mean"] <- sub$rolling_mean
+}
+
+# Calculate variance
+aw$variance <- (aw$temp - aw$rolling_mean)^2
+
+# Assign NA when variance is very small
+aw$temp[which(aw$variance < 1e-10)] <- NA
+```
+
+
+
+## Plot data
+
+```{r plotcheck, fig.height=8}
+#plot to check import
+par(mfrow=c(4,4))
+for (i in seq_along(loc_seq)){
+  sub=aw[(aw$location==loc_seq[i]),]
+  sub=sub[order(sub$date),]
+plot(temp~date, data=sub, main=loc_seq[i])
+lines(dmean~date, data=sub,col="red", type="l")
+
+}
+
+# Note high correlation in air temps
+#library(ggplot2)
+#ggplot(aw[aw$year==2012,], aes(x = date, y = dmean, group = station_name, colour = station_name)) + 
+#  geom_line()
+```
+
+## Identify years with less missing data
+```{r years}
+#Randomly select years for model fitting
+
+# Or use a particular year
+#aw=aw[aw$year==2012,]
+
+# get table of sample years by location
+yr_out=table(aw$location, aw$year)
+
+
+# select sample years with more than X days
+full_year=list()
+sind=vector()
+cnt=0
+ind=0
+
+for (i in seq_along(loc_seq)){
+   rm(ind)
+   if (ncol(yr_out)>=1) {
+     ind=which(yr_out[row.names(yr_out)==loc_seq[i],]>250)
+     
+     if (length(ind)>0) {
+       sind=c(sind,i)
+       cnt=cnt+1
+       full_year[[cnt]]=colnames(yr_out)[ind]
+     }
+  }
+}
+full_year=setNames(full_year,loc_seq[sind])
+```
+
+## Random sample good years
+
+```{r}
+
+# randomly sample "good" years for model fit
+indx=vector()
+dfind=data.frame(location=character(), year=integer(), stringsAsFactors = FALSE)
+cnt=0
+
+for (i in 1:length(full_year)){
+  smp=full_year[[i]]
+  
+  if (length(smp)>1){
+    indx=(sample(smp, 1))
+    yr=indx
+  } else if (length(smp)==1){
+    indx=smp
+    print(indx)
+    yr=indx
+  }
+  
+  cnt=cnt+1
+  dfind[cnt,]=c(names(full_year[i]), yr)
+}
+
+knitr::kable(dfind, title="fitting data")
+```
+
+```{r}
+# create fitting data
+aw_sub=merge(aw, dfind, by=c("location", "year"))
+aw_sub=aw_sub[complete.cases(aw_sub$dmean),]
+```
+
+## fit mixed lag model and ACF
+
+```{r}
+aw_sub <- aw_sub %>% 
+  filter(location != "portdover" & location != "longpoint") %>% 
+  arrange(location, date)
+
+
+#fit mixed
+library(nlme)
+ctrl <- lmeControl(opt='optim');
+fm2 <- lme(temp ~ dmean+dmean_2+dmean_3, data = aw_sub, 
+           control=ctrl,
+           random = ~ 1 | location, na.action = na.omit,
+           corAR1(form = ~ 1 | location))
+
+# plot ACF
+plot(ACF(fm2,resType="normalized"),alpha=0.05)
+```
+
+## Plot predictions
+
+```{r, fig.height=8}
+# plot predictions
+fplot=predict(fm2, re.form=~(1|location))
+aw_sub$pred=fplot
+par(mfrow=c(2,2))
+
+for (i in 1:nrow(dfind)){
+  sub=aw_sub[(aw_sub$location==dfind$location[i]),]
+  sub=sub[order(sub$date),]
+  diff=round(sqrt(mean((sub$temp-sub$pred)^2)),2)
+  plot(temp~date, data=sub, 
+       main=paste(dfind$location[i], ": ", dfind$year[i],
+                  " (RMSE:", diff, ")"))
+  lines(pred~date, data=sub,col="red", type="l")
+}
+```
+
+```{r}
+
+# test on new data
+dfind_test=data.frame(location=character(), year=integer(), stringsAsFactors = FALSE)
+
+for (i in 1:nrow(dfind)){
+    test_site=full_year[dfind[i,1]]
+    test_years=test_site[test_site!= dfind[i,2]] #not checking re-sampling same data here...
+    indxp=(sample(test_years[[1]], 1))
+    dfind_test[i,]=c(dfind[i,1], indxp)
+    
+  }
+
+aw_test=merge(aw, dfind_test, by=c("location", "year"))
+ftest=predict(fm2, newdata = aw_test, re.form=~(1|location))
+aw_test$test=ftest
+
+# plot results of test
+par(mfrow=c(2,2))
+for (i in 1:nrow(dfind_test)){
+  sub=aw_test[(aw_test$location==dfind_test$location[i]),]
+  sub=sub[order(sub$date),]
+  diff=round(sqrt(mean((sub$temp-sub$test)^2)),2)
+  plot(temp~date, data=sub, 
+       main=paste(dfind$location[i], ": ", dfind_test$year[i],
+                  " (RMSE:", diff, ")"))
+  lines(test~date, data=sub,col="green", type="l")
+}
+```
