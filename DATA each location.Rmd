@@ -1,0 +1,590 @@
+---
+title: "test on each model"
+author: "Eddie Wu"
+date: "`r Sys.Date()`"
+output: pdf_document
+---
+
+
+```{r get train and test unique}
+ytrain = c(2006,2013,2013,2011,2001,2011,2008,2011,2014,2002,2011,2013)
+ytest = c(2003,2012,2014,2013,2005,2013,2009,2012,2013,2005,2013,2014)
+y = cbind(loc_seq,ytrain,ytest)
+
+current.training <- merge(master.temp, y,
+                          by.x = c("location", "year"),
+                          by.y = c("loc_seq", "ytrain")) %>% 
+  arrange(location, date)
+
+current.testing <- merge(master.temp, y,
+                          by.x = c("location", "year"),
+                          by.y = c("loc_seq", "ytest")) %>% 
+  arrange(location, date)
+```
+
+
+```{r specify season}
+small <- c("bigotter","bigcreek","vermilion","humber")
+north <- c("nipigon","mississagi","still")
+big <- c("portage", "nipigon","mississagi","still","stlouis","fox","saginaw","genesee")
+
+
+ctrl = glsControl(opt='optim')
+
+# breakpoint
+current.training <-current.training %>% 
+  filter(yday(date)>90 & yday(date)<200)
+
+current.testing <-current.testing %>% 
+  filter(yday(date)>90 & yday(date)<200)
+
+current.training.s <- current.training %>% 
+  filter(location %in% small)
+
+current.testing.s <- current.testing %>% 
+  filter(location %in% small)
+
+current.training.b <- current.training %>% 
+  filter(location %in% big)
+
+current.testing.b <- current.testing %>% 
+  filter(location %in% big)
+
+# plot
+current.training %>%
+  filter(location %in% small) %>% 
+  ggplot(aes(x=yday(date),y=water))+
+    geom_line(aes(color=location))
+
+
+current.training %>%
+  filter(location %in% small) %>% 
+  ggplot(aes(x=air,y=water))+
+    geom_point(aes(color=location))
+```
+
+```{r cal time}
+## calculate variance of first derivative
+current.training <- current.training %>% 
+  group_by(location) %>% 
+  mutate(dy=c(NA,diff(water)))
+
+current.training <- current.training[is.finite(current.training$dy),]
+
+current.training <- current.training %>% 
+  group_by(location) %>% 
+  mutate(smooth=var(dy, na.rm=T))
+
+sm <- current.training %>%
+  group_by(location) %>% 
+  summarise(m = mean(smooth))
+
+```
+
+
+# linear lag7
+
+```{r linear individual}
+## Forms
+form.locrandom <- water ~ air + dmean_1 + dmean_2 + dmean_3 + dmean_4 + dmean_5 + dmean_6
+
+
+# For each location
+for (loc in loc_seq){
+  
+  dftrain = current.training[current.training$location == loc,]
+  dftest = current.testing[current.testing$location == loc,]
+  compare = dftest
+  
+  # model
+  model.ar <- gls(form.locrandom, control = ctrl,
+                  na.action = na.omit, data = dftrain,
+                  correlation=corAR1())
+  compare$preds.ar <- as.vector(predict(model.ar, newdata = dftest))
+  
+  # assumptions
+  plot(model.ar$residuals~model.ar$fitted, main=loc)
+  abline(h=0)
+  
+  a = plot(ACF(model.ar,resType="n"),alpha=0.05)
+  print(a)
+  
+  # prediction plots
+  rmse = round(sqrt(mean((compare$preds.ar-compare$water)^2)),2)
+  bias = round(mean(compare$preds.ar-compare$water),2)
+  
+  pl <- ggplot(data=compare, aes(x=date))+
+          geom_line(aes(x=date, y=water), color = "black")+
+          geom_line(aes(x=date, y=preds.ar), color = "blue")+
+          ggtitle(paste(
+            loc, ": ", compare$year, " (RMSE:", rmse, "&", "bias:",
+            bias, ")"))
+  print(pl)
+  
+  print(summary(model.ar))
+}
+```
+
+
+```{r linear grouped small}
+## Forms
+form.locrandom <- water ~ air + dmean_1 + dmean_2 + dmean_3 + dmean_4 + dmean_5 + dmean_6 + dmean_7
+
+dftrain = current.training.s
+dftest = current.testing.s
+compare = dftest
+
+
+# model training and predicting
+model.ar <- gls(form.locrandom, control = ctrl,
+                na.action = na.omit, data = dftrain,
+                correlation=corAR1())
+
+compare$preds.ar <- as.vector(predict(model.ar, newdata = dftest))
+
+dftrain <- cbind(dftrain, res = model.ar$residuals, fit = model.ar$fitted)
+
+
+plot(ACF(model.ar,resType="n"),alpha=0.05)
+
+
+# for each loc
+for (loc in small){
+  # get current loc
+  dfloc = dftrain[dftrain$location == loc,]
+  comploc = compare[compare$location == loc,]
+  
+  # assumptions
+  plot(res~fit, dfloc, main=paste0(loc))
+  abline(h=0)
+  
+  # prediction plots
+  rmse = round(sqrt(mean((comploc$preds.ar-comploc$water)^2)),2)
+  bias = round(mean(comploc$preds.ar-comploc$water),2)
+  
+  pl <- ggplot(data=comploc, aes(x=date))+
+          geom_line(aes(x=date, y=water), color = "black")+
+          geom_line(aes(x=date, y=preds.ar), color = "blue")+
+          ggtitle(paste(
+            loc, ": ", compare$year, " (RMSE:", rmse, "&", "bias:",
+            bias, ")"))
+  print(pl)
+}
+```
+
+```{r linear grouped big}
+## Forms
+form.locrandom <- water ~ air + dmean_1 + dmean_2 + dmean_3 + dmean_4 + dmean_5 + dmean_6 + dmean_7
+
+dftrain = current.training.b
+dftest = current.testing.b
+compare = dftest
+
+
+# model training and predicting
+model.ar <- gls(form.locrandom, control = ctrl,
+                na.action = na.omit, data = dftrain,
+                correlation=corAR1())
+
+compare$preds.ar <- as.vector(predict(model.ar, newdata = dftest))
+
+dftrain <- cbind(dftrain, res = model.ar$residuals, fit = model.ar$fitted)
+
+
+plot(ACF(model.ar,resType="n"),alpha=0.05)
+
+
+# for each loc
+for (loc in big){
+  # get current loc
+  dfloc = dftrain[dftrain$location == loc,]
+  comploc = compare[compare$location == loc,]
+  
+  # assumptions
+  plot(res~fit, dfloc, main=paste0(loc))
+  abline(h=0)
+  
+  # prediction plots
+  rmse = round(sqrt(mean((comploc$preds.ar-comploc$water)^2)),2)
+  bias = round(mean(comploc$preds.ar-comploc$water),2)
+  
+  pl <- ggplot(data=comploc, aes(x=date))+
+          geom_line(aes(x=date, y=water), color = "black")+
+          geom_line(aes(x=date, y=preds.ar), color = "blue")+
+          ggtitle(paste(
+            loc, ": ", compare$year, " (RMSE:", rmse, "&", "bias:",
+            bias, ")"))
+  print(pl)
+}
+```
+
+
+# seasonal residual
+
+```{r seasonal individual}
+# For each location
+for (loc in loc_seq){
+  
+  dftrain = current.training[current.training$location == loc,]
+  dftest = current.testing[current.testing$location == loc,]
+  compare <- dftest
+  
+  # model
+  annual.comp <- nls(air ~ a+b*sin(2*pi/365*(yday(date)+t0)),
+                   start = list(a=0.05, b=5, t0=-26),
+                   data=dftrain)
+
+  # get the air temperature residuals
+  res <- as.data.frame(matrix(NA, ncol = 2, 
+                            nrow = length(na.omit(dftrain$air))))
+  # dataframe to store the residuals
+  colnames(res) <- c("res.t", "location")
+  res[,"location"] <- na.omit(dftrain$location)
+  res[,"res.t"] <- as.vector(residuals(annual.comp))
+  res <- res %>% group_by(location) %>%
+    mutate(res.t1 = lag(res.t, 1),
+           res.t2 = lag(res.t, 2))
+  res[,"res.w"] <- residuals(nls(water ~ a+b*sin(2*pi/365*(yday(date)+t0)),
+                               start = list(a=0.05, b=5, t0=-26),
+                               data = dftrain))
+
+  # get the water temperature residual component
+  residual.comp.ar <- gls(res.w ~ res.t + res.t1 + res.t2,
+                          correlation = corAR1(),
+                          data = res, na.action = na.omit,
+                          control = ctrl)
+  
+  ## TESTING
+  # Annual
+  preds.annual <- as.data.frame(predict(annual.comp, newdata=dftest))
+  preds.annual <- cbind(preds.annual, dftest$location, dftest$date)
+  colnames(preds.annual) <- c("preds.annual", "location", "date")
+
+  # Residuals data
+  res <- as.data.frame(matrix(NA, ncol = 3, 
+                              nrow = length(dftest$air))) #residuals
+  colnames(res) <- c("res.t", "location", "date")
+  res[,"location"] <- dftest$location
+  res[,"date"] <- dftest$date
+  res[,"res.t"] <- dftest$air - preds.annual$preds.annual
+  res <- res %>% group_by(location) %>%
+  mutate(res.t1 = lag(res.t, 1),
+         res.t2 = lag(res.t, 2))
+
+  # Residuals predictions
+  pres.ar <- predict(residual.comp.ar, newdata=res, na.action=na.omit)
+  preds.residuals <- cbind(na.omit(res)[,"location"],
+                           na.omit(res)[,"date"], as.data.frame(pres.ar))
+
+  # Combine and add up both components
+  p <- merge(preds.annual, preds.residuals, by=c("location","date"))
+  p[,"preds.ar"] <- p$preds.annual + p$pres.ar
+
+  compare <- merge(dftest, p, by=c("location","date"))
+  
+  
+  # assumptions
+  plot(residual.comp.ar$residuals~residual.comp.ar$fitted, main=loc)
+  abline(h=0)
+  
+  a = plot(ACF(residual.comp.ar,resType="n"),alpha=0.05)
+  print(a)
+  
+  # prediction plots
+  rmse = round(sqrt(mean((compare$preds.ar-compare$water)^2)),2)
+  bias = round(mean(compare$preds.ar-compare$water),2)
+  
+  pl <- ggplot(data=compare, aes(x=date))+
+          geom_line(aes(x=date, y=water), color = "black")+
+          geom_line(aes(x=date, y=preds.ar), color = "blue")+
+          ggtitle(paste(
+            loc, ": ", compare$year, " (RMSE:", rmse, "&", "bias:",
+            bias, ")"))
+  print(pl)
+  
+  print(summary(residual.comp.ar))
+}
+```
+
+
+```{r seasonal grouped small}
+compare <- NA
+
+
+## TRAINING
+# get the model annual component
+annual.comp <- nls(air ~ a+b*sin(2*pi/365*(yday(date)+t0)),
+                   start = list(a=0.05, b=5, t0=-26),
+                   data=current.training.s)
+
+# get the air temperature residuals
+res <- as.data.frame(matrix(NA, ncol = 2, 
+                            nrow = length(na.omit(current.training.s$air))))
+# dataframe to store the residuals
+colnames(res) <- c("res.t", "location")
+res[,"location"] <- na.omit(current.training.s$location)
+res[,"res.t"] <- as.vector(residuals(annual.comp))
+res <- res %>% group_by(location) %>%
+  mutate(res.t1 = lag(res.t, 1),
+         res.t2 = lag(res.t, 2))
+res[,"res.w"] <- residuals(nls(water ~ a+b*sin(2*pi/365*(yday(date)+t0)),
+                               start = list(a=0.05, b=5, t0=-26),
+                               data = current.training.s))
+
+# get the water temperature residual component
+residual.comp.ar <- gls(res.w ~ res.t + res.t1 + res.t2,
+                        correlation = corAR1(),
+                        data = res, na.action = na.omit,
+                        control = ctrl)
+
+
+## TESTING
+# Annual
+preds.annual <- as.data.frame(predict(annual.comp, newdata=current.testing.s))
+preds.annual <- cbind(preds.annual,
+                      current.testing.s$location, current.testing.s$date)
+colnames(preds.annual) <- c("preds.annual", "location", "date")
+
+# Residuals data
+res <- as.data.frame(matrix(NA, ncol = 3, 
+                            nrow = length(current.testing.s$air))) #residuals
+colnames(res) <- c("res.t", "location", "date")
+res[,"location"] <- current.testing.s$location
+res[,"date"] <- current.testing.s$date
+res[,"res.t"] <- current.testing.s$air - preds.annual$preds.annual
+res <- res %>% group_by(location) %>%
+  mutate(res.t1 = lag(res.t, 1),
+         res.t2 = lag(res.t, 2))
+
+# Residuals predictions
+pres.ar <- predict(residual.comp.ar, newdata=res, na.action=na.omit)
+preds.residuals <- cbind(na.omit(res)[,"location"],
+                         na.omit(res)[,"date"],as.data.frame(pres.ar))
+
+# Combine and add up both components
+p <- merge(preds.annual, preds.residuals, by=c("location","date"))
+p[,"preds.ar"] <- p$preds.annual + p$pres.ar
+
+compare <- merge(current.testing, p, by=c("location","date"))
+
+
+## Assumptions
+plot(ACF(residual.comp.ar,resType="normalized"),alpha=0.05)
+
+
+## Plots
+for (loc in small){
+  # get current loc
+  dfloc = current.training.s[current.training.s$location == loc,]
+  comploc = compare[compare$location == loc,]
+  
+  # assumptions
+  plot(res~fit, dfloc, main=paste0(loc))
+  abline(h=0)
+  
+  # prediction plots
+  rmse = round(sqrt(mean((comploc$preds.ar-comploc$water)^2)),2)
+  bias = round(mean(comploc$preds.ar-comploc$water),2)
+  
+  pl <- ggplot(data=comploc, aes(x=date))+
+          geom_line(aes(x=date, y=water), color = "black")+
+          geom_line(aes(x=date, y=preds.ar), color = "blue")+
+          ggtitle(paste(
+            loc, ": ", compare$year, " (RMSE:", rmse, "&", "bias:",
+            bias, ")"))
+  print(pl)
+}
+```
+
+
+# Non-linear
+
+
+```{r nonlinear individual}
+library(drc)
+
+# For each location
+for (loc in loc_seq){
+  
+  dftrain = current.training[current.training$location == loc,] %>% 
+    rowwise() %>% 
+    mutate(cair = mean(c_across(9:15)))
+  dftest = current.testing[current.testing$location == loc,] %>% 
+    rowwise() %>% 
+    mutate(cair = mean(c_across(9:15)))
+  compare <- dftest
+  
+  # coefs
+  modelco <- drm(water ~ air, fct = L.3(), data = dftrain)
+  co = c(alpha=as.numeric(coef(modelco)[2]),
+         beta=as.numeric(coef(modelco)[3]),
+         gamma=as.numeric(-coef(modelco)[1]))
+
+  
+  # model
+  model.new <- gnls(water ~ alpha / (1 + exp(gamma * (beta - cair))),
+                    data = dftrain, na.action = na.omit,
+                    start = co,
+                    correlation = corAR1(),
+                    control=gnlsControl(nlsTol=1000, maxIter=1000))
+
+
+  compare$preds.new <- as.vector(predict(model.new, newdata = dftest))
+  
+  # assumptions
+  plot(model.new$residuals~model.new$fitted, main=loc)
+  abline(h=0)
+  
+  a = plot(ACF(model.new,resType="n"),alpha=0.05)
+  print(a)
+  
+  # prediction plots
+  rmse = round(sqrt(mean((compare$preds.new-compare$water)^2)),2)
+  bias = round(mean(compare$preds.new-compare$water),2)
+  
+  pl <- ggplot(data=compare, aes(x=date))+
+          geom_line(aes(x=date, y=water), color = "black")+
+          geom_line(aes(x=date, y=preds.new), color = "blue")+
+          ggtitle(paste(
+            loc, ": ", compare$year, " (RMSE:", rmse, "&", "bias:",
+            bias, ")"))
+  print(pl)
+  
+  print(summary(model.new))
+}
+```
+
+
+```{r nonlinear small}
+dftrain <- current.training.s %>% 
+  rowwise() %>% 
+  mutate(cair = mean(c_across(9:16)))
+
+dftest <- current.testing.s %>% 
+  rowwise() %>% 
+  mutate(cair = mean(c_across(9:16)))
+
+compare <- dftest
+
+# coefs
+modelco <- drm(water ~ air, fct = L.3(), data = dftrain)
+co = c(alpha=as.numeric(coef(modelco)[2]),
+       beta=as.numeric(coef(modelco)[3]),
+       gamma=as.numeric(-coef(modelco)[1]))
+
+# model training and predicting
+model.new <- gnls(water ~ alpha / (1 + exp(gamma * (beta - cair))),
+              start = co,
+              data = dftrain, na.action = na.omit,
+              correlation = corAR1(),
+              control = gnlsControl(nlsTol = 100, maxIter = 1000))
+
+compare$preds.new <- as.vector(predict(model.new, newdata=dftest))
+
+dftrain <- cbind(dftrain, res = model.new$residuals, fit = model.new$fitted)
+
+
+## Assumptions
+plot(ACF(model.new,resType="normalized"),alpha=0.05)
+
+
+## Plots
+for (loc in small){
+  # get current loc
+  dfloc = dftrain[dftrain$location == loc,]
+  comploc = compare[compare$location == loc,]
+  
+  # assumptions
+  plot(res~fit, dfloc, main=paste0(loc))
+  abline(h=0)
+  
+  # prediction plots
+  rmse = round(sqrt(mean((comploc$preds.new-comploc$water)^2)),2)
+  bias = round(mean(comploc$preds.new-comploc$water),2)
+  
+  pl <- ggplot(data=comploc, aes(x=date))+
+          geom_line(aes(x=date, y=water), color = "black")+
+          geom_line(aes(x=date, y=preds.new), color = "blue")+
+          ggtitle(paste(
+            loc, ": ", compare$year, " (RMSE:", rmse, "&", "bias:",
+            bias, ")"))
+  print(pl)
+}
+```
+
+
+```{r nonlinear big}
+dftrain <- current.training.b %>% 
+  rowwise() %>% 
+  mutate(cair = mean(c_across(9:16)))
+
+dftest <- current.testing.b %>% 
+  rowwise() %>% 
+  mutate(cair = mean(c_across(9:16)))
+
+compare <- dftest
+
+# coefs
+modelco <- drm(water ~ air, fct = L.3(), data = dftrain)
+co = c(alpha=as.numeric(coef(modelco)[2]),
+       beta=as.numeric(coef(modelco)[3]),
+       gamma=as.numeric(-coef(modelco)[1]))
+
+# model training and predicting
+model.new <- gnls(water ~ alpha / (1 + exp(gamma * (beta - cair))),
+              start = co,
+              data = dftrain, na.action = na.omit,
+              correlation = corAR1(),
+              control = gnlsControl(nlsTol = 100, maxIter = 1000))
+
+compare$preds.new <- as.vector(predict(model.new, newdata=dftest))
+
+dftrain <- cbind(dftrain, res = model.new$residuals, fit = model.new$fitted)
+
+## Assumptions
+plot(ACF(model.new,resType="normalized"),alpha=0.05)
+
+
+## Plots
+for (loc in big){
+  # get current loc
+  dfloc = dftrain[dftrain$location == loc,]
+  comploc = compare[compare$location == loc,]
+  
+  # assumptions
+  plot(res~fit, dfloc, main=paste0(loc))
+  abline(h=0)
+  
+  # prediction plots
+  rmse = round(sqrt(mean((comploc$preds.new-comploc$water)^2)),2)
+  bias = round(mean(comploc$preds.new-comploc$water),2)
+  
+  pl <- ggplot(data=comploc, aes(x=date))+
+          geom_line(aes(x=date, y=water), color = "black")+
+          geom_line(aes(x=date, y=preds.new), color = "blue")+
+          ggtitle(paste(
+            loc, ": ", compare$year, " (RMSE:", rmse, "&", "bias:",
+            bias, ")"))
+  print(pl)
+}
+```
+
+
+```{r}
+# coefs
+  objective_function <- function(params) {
+    alpha <- params[1]
+    beta <- params[2]
+    gamma <- params[3]
+    predicted <- alpha / (1 + exp(gamma * (beta - dftrain$cair)))
+    sum((dftrain$water - predicted)^2)
+  }
+  optim_start <- optim(c(alpha=28, beta=15, gamma=0.1), objective_function)
+  optim_start
+
+
+
+
+summary(ur.df(residuals(model.new),"drift"))
+
+```
