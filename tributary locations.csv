@@ -1,0 +1,11 @@
+tributary name,location,corresponding lake,longitude,latitude,start,end,country,cat,siteID
+St.Louis River,stlouis,Superior,-92.4188018,46.7032765,2011,2019,us,large,4024000
+Salmon Trout River,salmontrout,Superior,-87.8776299,46.78214818,2009,2019,us,small,4043238
+Saginaw River,saginaw,Huron,-83.951918,43.4219699,2011,2019,us,large,4157005
+Rifle River,rifle,Huron,-84.0199939,44.0725203,2012,2019,us,small,4142000
+St.Joseph River,stjoseph,Michigan,-86.2597325,41.8292138,2011,2019,us,large,4101500
+Yellow River,yellowr,Michigan,-86.62053829,41.30279685,2012,2019,us,small,5517000
+Genesee River,genesee,Ontario,-77.6163056,43.1417222,2011,2019,us,large,4231600
+Humber River,humber,Ontario,-79.495652,43.652139,1998,2013,ca,small,999
+Allegheny River,allegheny,Erie,-79.0119846,41.84144917,2007,2019,us,large,3012550
+Big Creek River,bigcreek,Erie,-80.503696,42.758854,2000,2014,ca,small,999
